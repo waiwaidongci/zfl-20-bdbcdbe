@@ -189,6 +189,15 @@ function computeRepairWorkbenchDashboard(db, filters = {}) {
   };
 }
 
+function parseScheduleRangeDate(value, isEndDate = false) {
+  const date = new Date(value);
+  if (isNaN(date.getTime())) return null;
+  if (isEndDate && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    date.setUTCHours(23, 59, 59, 999);
+  }
+  return date;
+}
+
 async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
@@ -564,9 +573,9 @@ async function handle(req, res) {
       return send(res, 400, { error: "缺少参数：startDate 和 endDate 都是必需的" });
     }
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    const start = parseScheduleRangeDate(startDate);
+    const end = parseScheduleRangeDate(endDate, true);
+    if (!start || !end) {
       return send(res, 400, { error: "日期格式无效，请使用 ISO 格式（如 2026-06-01 或 2026-06-01T00:00:00.000Z）" });
     }
 

@@ -222,21 +222,24 @@ async function runTests() {
     damages: [
       { id: "d1", rubbingId: "r1", position: "左上角", type: "虫蛀孔", beforePhotoUrl: "x.jpg", afterPhotoUrl: "", status: "in_repair", repairNote: "", batchId: "b1", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: null },
       { id: "d2", rubbingId: "r1", position: "下边缘", type: "撕裂", beforePhotoUrl: "x.jpg", afterPhotoUrl: "", status: "in_repair", repairNote: "", batchId: "b2", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: null },
-      { id: "d3", rubbingId: "r1", position: "右上角", type: "水渍", beforePhotoUrl: "x.jpg", afterPhotoUrl: "", status: "in_repair", repairNote: "", batchId: "b3", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: null }
+      { id: "d3", rubbingId: "r1", position: "右上角", type: "水渍", beforePhotoUrl: "x.jpg", afterPhotoUrl: "", status: "in_repair", repairNote: "", batchId: "b3", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: null },
+      { id: "d4", rubbingId: "r1", position: "左下角", type: "霉斑", beforePhotoUrl: "x.jpg", afterPhotoUrl: "", status: "in_repair", repairNote: "", batchId: "b4", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: null }
     ],
     batches: [
       { id: "b1", name: "六月上旬批次", status: "open", damageIds: ["d1"], note: "", createdAt: "2026-06-01T00:00:00.000Z", completedAt: null, plannedStartAt: "2026-06-05T00:00:00.000Z", plannedEndAt: "2026-06-10T00:00:00.000Z", responsible: "张师傅" },
       { id: "b2", name: "六月中旬批次", status: "open", damageIds: ["d2"], note: "", createdAt: "2026-06-01T00:00:00.000Z", completedAt: null, plannedStartAt: "2026-06-15T00:00:00.000Z", plannedEndAt: "2026-06-20T00:00:00.000Z", responsible: "李师傅" },
-      { id: "b3", name: "七月批次", status: "open", damageIds: ["d3"], note: "", createdAt: "2026-06-01T00:00:00.000Z", completedAt: null, plannedStartAt: "2026-07-01T00:00:00.000Z", plannedEndAt: "2026-07-05T00:00:00.000Z", responsible: "王师傅" }
+      { id: "b3", name: "七月批次", status: "open", damageIds: ["d3"], note: "", createdAt: "2026-06-01T00:00:00.000Z", completedAt: null, plannedStartAt: "2026-07-01T00:00:00.000Z", plannedEndAt: "2026-07-05T00:00:00.000Z", responsible: "王师傅" },
+      { id: "b4", name: "六月月末批次", status: "open", damageIds: ["d4"], note: "", createdAt: "2026-06-01T00:00:00.000Z", completedAt: null, plannedStartAt: "2026-06-30T09:00:00.000Z", plannedEndAt: "2026-06-30T18:00:00.000Z", responsible: "赵师傅" }
     ]
   });
   await startServer();
 
   const juneScheduleRes = await httpRequest("GET", "/schedules?startDate=2026-06-01&endDate=2026-06-30");
   assertEqual(juneScheduleRes.status, 200, "六月排程查询返回 200");
-  assertEqual(juneScheduleRes.body.total, 2, "六月范围内有 2 个排程");
+  assertEqual(juneScheduleRes.body.total, 3, "六月范围内有 3 个排程");
   assert(juneScheduleRes.body.data.some((b) => b.name === "六月上旬批次"), "包含六月上旬批次");
   assert(juneScheduleRes.body.data.some((b) => b.name === "六月中旬批次"), "包含六月中旬批次");
+  assert(juneScheduleRes.body.data.some((b) => b.name === "六月月末批次"), "包含六月月末批次");
   assert(!juneScheduleRes.body.data.some((b) => b.name === "七月批次"), "不包含七月批次");
   assertEqual(juneScheduleRes.body.data[0].name, "六月上旬批次", "排程按开始时间升序排列");
 
