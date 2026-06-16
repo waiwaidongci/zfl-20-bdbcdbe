@@ -69,19 +69,25 @@ curl http://127.0.0.1:3020/damages?reviewStatus=review_pending
 
 支持组合过滤：`/damages?reviewStatus=review_pending&type=虫蛀孔`
 
-#### 第4步：审核通过
+#### 第4步：审核通过（以 damage_demo_2 为例）
 
 ```bash
-curl -X POST http://127.0.0.1:3020/damages/damage_demo_1/approve \
+curl -X POST http://127.0.0.1:3020/damages/damage_demo_2/approve \
   -H 'Content-Type: application/json'
 ```
 
-审核通过后 `reviewStatus` 变为 `approved`。
+审核通过后 `reviewStatus` 变为 `approved`，之后该缺损项可加入修补批次。
 
-#### 第4步（备选）：审核驳回
+#### 第4步（备选）：审核驳回（先登记一个新缺损项，再对其驳回）
 
 ```bash
-curl -X POST http://127.0.0.1:3020/damages/damage_demo_2/reject \
+# 先登记一个新的缺损项
+curl -X POST http://127.0.0.1:3020/rubbings/rubbing_demo/damages \
+  -H 'Content-Type: application/json' \
+  -d '{"position":"右下角","type":"霉斑","beforePhotoUrl":"https://example.local/before-mold.jpg"}'
+
+# 然后驳回（假设返回的 id 为 damage_new，reason 必填且不能为空）
+curl -X POST http://127.0.0.1:3020/damages/damage_new/reject \
   -H 'Content-Type: application/json' \
   -d '{"reason":"照片模糊无法确认缺损位置，请重新拍摄后提交"}'
 ```
@@ -93,7 +99,7 @@ curl -X POST http://127.0.0.1:3020/damages/damage_demo_2/reject \
 ```bash
 curl -X POST http://127.0.0.1:3020/batches \
   -H 'Content-Type: application/json' \
-  -d '{"name":"六月小批修补","damageIds":["damage_demo_1"]}'
+  -d '{"name":"六月小批修补","damageIds":["damage_demo_1","damage_demo_2"]}'
 ```
 
 若 `damageIds` 中包含未通过审核的缺损项，返回 400 错误及 `unapprovedDamageIds` 列表。

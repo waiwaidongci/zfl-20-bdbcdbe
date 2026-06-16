@@ -373,8 +373,11 @@ async function handle(req, res) {
       return send(res, 400, { error: "当前审核状态不是待审核，无法执行审核驳回操作" });
     }
     const body = await parseBody(req);
+    if (!body.reason || typeof body.reason !== "string" || body.reason.trim() === "") {
+      return send(res, 400, { error: "驳回原因不能为空" });
+    }
     damage.reviewStatus = "rejected";
-    damage.rejectReason = body.reason || "";
+    damage.rejectReason = body.reason.trim();
     await writeDb(db);
     return send(res, 200, { data: normalizeDamage(damage) });
   }
