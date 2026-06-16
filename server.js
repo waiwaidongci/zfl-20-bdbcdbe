@@ -62,7 +62,8 @@ const routes = [
   "POST /import/precheck",
   "POST /import/confirm",
   "GET /dashboard/repair-workbench?type=&rubbingId=&batchId=",
-  "GET /rubbings/:id/summary"
+  "GET /rubbings/:id/summary",
+  "GET /schedules?startDate=&endDate=&status="
 ];
 
 async function ensureDb() {
@@ -128,6 +129,9 @@ function enrichBatch(db, batch) {
   const damages = db.damages.filter((item) => batch.damageIds.includes(item.id));
   return {
     ...batch,
+    plannedStartAt: batch.plannedStartAt || null,
+    plannedEndAt: batch.plannedEndAt || null,
+    responsible: batch.responsible || null,
     damages,
     total: damages.length,
     repaired: damages.filter((item) => item.status === "repaired").length,
@@ -328,12 +332,30 @@ async function handle(req, res) {
     if (!Array.isArray(body.damageIds) || body.damageIds.length === 0) return send(res, 400, { error: "damageIds必须是非空数组" });
     const invalid = body.damageIds.filter((id) => !db.damages.find((damage) => damage.id === id));
     if (invalid.length) return send(res, 400, { error: `缺损项不存在：${invalid.join(", ")}` });
+
+    const scheduledDamageIds = new Set();
+    db.batches.forEach((b) => {
+      if (b.status !== "completed") {
+        b.damageIds.forEach((did) => scheduledDamageIds.add(did));
+      }
+    });
+    const conflictDamageIds = body.damageIds.filter((did) => scheduledDamageIds.has(did));
+    if (conflictDamageIds.length) {
+      return send(res, 400, {
+        error: "以下缺损项已存在于未完成批次中，不能重复排程",
+        conflictDamageIds
+      });
+    }
+
     const batch = {
       id: makeId("batch"),
       name: body.name,
       status: "open",
       damageIds: body.damageIds,
       note: body.note || "",
+      plannedStartAt: body.plannedStartAt || null,
+      plannedEndAt: body.plannedEndAt || null,
+      responsible: body.responsible || null,
       createdAt: new Date().toISOString(),
       completedAt: null
     };
@@ -530,6 +552,49 @@ async function handle(req, res) {
         rubbings: result.rubbings.length - result.importable.rubbings,
         damages: result.damages.length - result.importable.damages
       }
+    });
+  }
+
+  if (req.method === "GET" && pathname === "/schedules") {
+    const startDate = url.searchParams.get("startDate");
+    const endDate = url.searchParams.get("endDate");
+    const statusFilter = url.searchParams.get("status");
+
+    if (!startDate || !endDate) {
+      return send(res, 400, { error: "缺少参数：startDate 和 endDate 都是必需的" });
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return send(res, 400, { error: "日期格式无效，请使用 ISO 格式（如 2026-06-01 或 2026-06-01T00:00:00.000Z）" });
+    }
+
+    const schedules = db.batches.filter((batch) => {
+      if (statusFilter && batch.status !== statusFilter) return false;
+
+      const batchStart = batch.plannedStartAt ? new Date(batch.plannedStartAt) : null;
+      const batchEnd = batch.plannedEndAt ? new Date(batch.plannedEndAt) : null;
+
+      if (!batchStart && !batchEnd) return false;
+
+      const effectiveStart = batchStart || new Date(batch.createdAt);
+      const effectiveEnd = batchEnd || effectiveStart;
+
+      return effectiveStart <= end && effectiveEnd >= start;
+    }).map((batch) => enrichBatch(db, batch));
+
+    schedules.sort((a, b) => {
+      const aStart = a.plannedStartAt || a.createdAt;
+      const bStart = b.plannedStartAt || b.createdAt;
+      return new Date(aStart) - new Date(bStart);
+    });
+
+    return send(res, 200, {
+      data: schedules,
+      total: schedules.length,
+      startDate: startDate,
+      endDate: endDate
     });
   }
 
