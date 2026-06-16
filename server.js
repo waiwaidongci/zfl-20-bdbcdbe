@@ -61,7 +61,8 @@ const routes = [
   "POST /batches/:id/complete",
   "POST /import/precheck",
   "POST /import/confirm",
-  "GET /dashboard/repair-workbench?type=&rubbingId=&batchId="
+  "GET /dashboard/repair-workbench?type=&rubbingId=&batchId=",
+  "GET /rubbings/:id/summary"
 ];
 
 async function ensureDb() {
@@ -249,6 +250,47 @@ async function handle(req, res) {
     db.damages.push(damage);
     await writeDb(db);
     return send(res, 201, { data: damage });
+  }
+
+  const summaryMatch = pathname.match(/^\/rubbings\/([^/]+)\/summary$/);
+  if (summaryMatch && req.method === "GET") {
+    const rubbingId = summaryMatch[1];
+    const rubbing = findRubbing(db, rubbingId);
+    const damages = db.damages.filter((item) => item.rubbingId === rubbingId);
+    const batchIds = [...new Set(damages.map((d) => d.batchId).filter(Boolean))];
+    const batches = batchIds.map((bid) => {
+      const batch = db.batches.find((b) => b.id === bid);
+      if (!batch) return null;
+      return {
+        id: batch.id,
+        name: batch.name,
+        status: batch.status,
+        total: batch.damageIds.length,
+        repaired: batch.damageIds.filter((did) => {
+          const d = db.damages.find((item) => item.id === did);
+          return d && d.status === "repaired";
+        }).length,
+        completedAt: batch.completedAt
+      };
+    }).filter(Boolean);
+    const total = damages.length;
+    const repaired = damages.filter((item) => item.status === "repaired").length;
+    const repairProgress = {
+      total,
+      repaired,
+      pending: damages.filter((item) => item.status === "pending").length,
+      inRepair: damages.filter((item) => item.status === "in_repair").length,
+      percentage: total === 0 ? 100 : Math.round((repaired / total) * 100)
+    };
+    return send(res, 200, {
+      data: {
+        rubbing,
+        damages,
+        batches,
+        hasUnbatchedDamages: damages.some((d) => !d.batchId),
+        repairProgress
+      }
+    });
   }
 
   if (req.method === "GET" && pathname === "/damages") {

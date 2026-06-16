@@ -23,6 +23,7 @@ PORT=3020 node server.js
 - `POST /batches/:id/complete`
 - `POST /import/precheck`
 - `POST /import/confirm`
+- `GET /rubbings/:id/summary`
 
 ## 闭环示例
 
