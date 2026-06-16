@@ -58,7 +58,9 @@ const routes = [
   "GET /batches",
   "POST /batches",
   "GET /batches/:id",
-  "POST /batches/:id/complete"
+  "POST /batches/:id/complete",
+  "POST /import/precheck",
+  "POST /import/confirm"
 ];
 
 async function ensureDb() {
@@ -279,6 +281,155 @@ async function handle(req, res) {
     });
     await writeDb(db);
     return send(res, 200, { data: enrichBatch(db, batch) });
+  }
+
+  function validateImportSubmission(body, db) {
+    const rubbings = Array.isArray(body.rubbings) ? body.rubbings : [];
+    const damages = Array.isArray(body.damages) ? body.damages : [];
+
+    const existingCodes = new Set(db.rubbings.map((r) => r.code));
+    const submittedCodes = new Set();
+    const duplicateCodes = [];
+    const missingRubbingFields = [];
+    const validRubbingIndices = new Set();
+
+    rubbings.forEach((rubbing, index) => {
+      const missing = ["code", "source", "paperSize"].filter(
+        (field) => rubbing[field] === undefined || rubbing[field] === ""
+      );
+      if (missing.length) {
+        missingRubbingFields.push({ index, fields: missing });
+      } else {
+        if (existingCodes.has(rubbing.code) || submittedCodes.has(rubbing.code)) {
+          duplicateCodes.push(rubbing.code);
+        } else {
+          submittedCodes.add(rubbing.code);
+          validRubbingIndices.add(index);
+        }
+      }
+    });
+
+    const existingRubbingIds = new Set(db.rubbings.map((r) => r.id));
+    const submittedRubbingRefs = new Map();
+    rubbings.forEach((rubbing, index) => {
+      if (validRubbingIndices.has(index) && rubbing.id) {
+        submittedRubbingRefs.set(rubbing.id, index);
+      }
+      if (validRubbingIndices.has(index) && rubbing.code) {
+        submittedRubbingRefs.set(rubbing.code, index);
+      }
+    });
+
+    const missingDamageFields = [];
+    const invalidDamageRubbingIds = [];
+    const validDamageIndices = new Set();
+
+    damages.forEach((damage, index) => {
+      const missing = ["position", "type", "beforePhotoUrl"].filter(
+        (field) => damage[field] === undefined || damage[field] === ""
+      );
+      if (missing.length) {
+        missingDamageFields.push({ index, fields: missing });
+        return;
+      }
+      const rubbingRef = damage.rubbingId;
+      const refExists =
+        rubbingRef &&
+        (existingRubbingIds.has(rubbingRef) ||
+          submittedRubbingRefs.has(rubbingRef));
+      if (!refExists) {
+        invalidDamageRubbingIds.push({ index, rubbingId: rubbingRef || null });
+      } else {
+        validDamageIndices.add(index);
+      }
+    });
+
+    return {
+      rubbings,
+      damages,
+      importable: {
+        rubbings: validRubbingIndices.size,
+        damages: validDamageIndices.size
+      },
+      duplicateCodes,
+      missingFields: {
+        rubbings: missingRubbingFields,
+        damages: missingDamageFields
+      },
+      invalidDamageRubbingIds,
+      validRubbingIndices,
+      validDamageIndices,
+      submittedRubbingRefs
+    };
+  }
+
+  if (req.method === "POST" && pathname === "/import/precheck") {
+    const body = await parseBody(req);
+    const result = validateImportSubmission(body, db);
+    return send(res, 200, {
+      importable: result.importable,
+      duplicateCodes: result.duplicateCodes,
+      missingFields: result.missingFields,
+      invalidDamageRubbingIds: result.invalidDamageRubbingIds
+    });
+  }
+
+  if (req.method === "POST" && pathname === "/import/confirm") {
+    const body = await parseBody(req);
+    const result = validateImportSubmission(body, db);
+
+    const idMap = new Map();
+    result.rubbings.forEach((rubbing, index) => {
+      if (!result.validRubbingIndices.has(index)) return;
+      const newId = makeId("rubbing");
+      if (rubbing.id) idMap.set(rubbing.id, newId);
+      if (rubbing.code) idMap.set(rubbing.code, newId);
+      const record = {
+        id: newId,
+        code: rubbing.code,
+        source: rubbing.source,
+        paperSize: rubbing.paperSize,
+        note: rubbing.note || "",
+        createdAt: new Date().toISOString()
+      };
+      db.rubbings.push(record);
+      idMap.set(`idx_${index}`, newId);
+    });
+
+    const importedDamages = [];
+    result.damages.forEach((damage, index) => {
+      if (!result.validDamageIndices.has(index)) return;
+      let rubbingId = damage.rubbingId;
+      if (idMap.has(rubbingId)) rubbingId = idMap.get(rubbingId);
+      const record = {
+        id: makeId("damage"),
+        rubbingId,
+        position: damage.position,
+        type: damage.type,
+        beforePhotoUrl: damage.beforePhotoUrl,
+        afterPhotoUrl: damage.afterPhotoUrl || "",
+        status: damage.status || "pending",
+        repairNote: damage.repairNote || "",
+        batchId: null,
+        createdAt: new Date().toISOString(),
+        repairedAt: null
+      };
+      db.damages.push(record);
+      importedDamages.push(record);
+    });
+
+    await writeDb(db);
+    return send(res, 201, {
+      imported: {
+        rubbings: result.importable.rubbings,
+        damages: result.importable.damages
+      },
+      duplicateCodes: result.duplicateCodes,
+      skipped: {
+        rubbings: result.rubbings.length - result.importable.rubbings,
+        damages: result.damages.length - result.importable.damages
+      }
+    });
   }
 
   return send(res, 404, { error: "接口不存在", routes });
