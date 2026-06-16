@@ -60,7 +60,8 @@ const routes = [
   "GET /batches/:id",
   "POST /batches/:id/complete",
   "POST /import/precheck",
-  "POST /import/confirm"
+  "POST /import/confirm",
+  "GET /dashboard/repair-workbench?type=&rubbingId=&batchId="
 ];
 
 async function ensureDb() {
@@ -130,6 +131,56 @@ function enrichBatch(db, batch) {
     total: damages.length,
     repaired: damages.filter((item) => item.status === "repaired").length,
     pending: damages.filter((item) => item.status !== "repaired").length
+  };
+}
+
+function computeRepairWorkbenchDashboard(db, filters = {}) {
+  const { type, rubbingId, batchId } = filters;
+
+  const filteredDamages = db.damages.filter((damage) => {
+    if (type && damage.type !== type) return false;
+    if (rubbingId && damage.rubbingId !== rubbingId) return false;
+    if (batchId && damage.batchId !== batchId) return false;
+    return true;
+  });
+
+  const statusCounts = {
+    pending: filteredDamages.filter((d) => d.status === "pending").length,
+    in_repair: filteredDamages.filter((d) => d.status === "in_repair").length,
+    repaired: filteredDamages.filter((d) => d.status === "repaired").length,
+    total: filteredDamages.length
+  };
+
+  const typeMap = new Map();
+  filteredDamages.forEach((damage) => {
+    if (!typeMap.has(damage.type)) {
+      typeMap.set(damage.type, {
+        type: damage.type,
+        total: 0,
+        pending: 0,
+        in_repair: 0,
+        repaired: 0
+      });
+    }
+    const entry = typeMap.get(damage.type);
+    entry.total += 1;
+    entry[damage.status] = (entry[damage.status] || 0) + 1;
+  });
+
+  const byType = Array.from(typeMap.values()).sort((a, b) => b.total - a.total);
+
+  const activeBatches = db.batches.filter((b) => {
+    if (batchId) return b.id === batchId;
+    if (rubbingId) return b.damageIds.some((did) => db.damages.find((d) => d.id === did && d.rubbingId === rubbingId));
+    return true;
+  });
+
+  return {
+    statusCounts,
+    byType,
+    totalTypes: byType.length,
+    activeBatches: activeBatches.filter((b) => b.status === "open").length,
+    completedBatches: activeBatches.filter((b) => b.status === "completed").length
   };
 }
 
@@ -281,6 +332,14 @@ async function handle(req, res) {
     });
     await writeDb(db);
     return send(res, 200, { data: enrichBatch(db, batch) });
+  }
+
+  if (req.method === "GET" && pathname === "/dashboard/repair-workbench") {
+    const type = url.searchParams.get("type");
+    const rubbingId = url.searchParams.get("rubbingId");
+    const batchId = url.searchParams.get("batchId");
+    const data = computeRepairWorkbenchDashboard(db, { type, rubbingId, batchId });
+    return send(res, 200, { data });
   }
 
   function validateImportSubmission(body, db) {
