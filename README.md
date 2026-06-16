@@ -43,13 +43,13 @@ PORT=3020 node server.js
 
 ### 完整调用链路：登记 → 审核 → 入批次
 
-#### 第1步：登记拓片
+#### 第1步：确认示例拓片
 
 ```bash
-curl -X POST http://127.0.0.1:3020/rubbings \
-  -H 'Content-Type: application/json' \
-  -d '{"code":"TP-清-014","source":"地方碑刻残页","paperSize":"42x68cm","note":"边缘有旧折痕"}'
+curl http://127.0.0.1:3020/rubbings
 ```
+
+示例数据内置 `rubbing_demo`，后续登记、审核和入批次示例都基于该拓片。
 
 #### 第2步：登记缺损项（自动进入待审核）
 
@@ -69,7 +69,7 @@ curl http://127.0.0.1:3020/damages?reviewStatus=review_pending
 
 支持组合过滤：`/damages?reviewStatus=review_pending&type=虫蛀孔`
 
-#### 第4步：审核通过（以 damage_demo_2 为例）
+#### 第4步：审核通过（以待审核的 damage_demo_2 为例）
 
 ```bash
 curl -X POST http://127.0.0.1:3020/damages/damage_demo_2/approve \
@@ -86,7 +86,7 @@ curl -X POST http://127.0.0.1:3020/rubbings/rubbing_demo/damages \
   -H 'Content-Type: application/json' \
   -d '{"position":"右下角","type":"霉斑","beforePhotoUrl":"https://example.local/before-mold.jpg"}'
 
-# 然后驳回（假设返回的 id 为 damage_new，reason 必填且不能为空）
+# 然后驳回（把 damage_new 替换为上一步返回的 id，reason 必填且不能为空）
 curl -X POST http://127.0.0.1:3020/damages/damage_new/reject \
   -H 'Content-Type: application/json' \
   -d '{"reason":"照片模糊无法确认缺损位置，请重新拍摄后提交"}'
@@ -109,7 +109,7 @@ curl -X POST http://127.0.0.1:3020/batches \
 ```bash
 curl -X POST http://127.0.0.1:3020/batches/batch_xxx/complete \
   -H 'Content-Type: application/json' \
-  -d '{"note":"全部修复完成","results":[{"damageId":"damage_demo_1","afterPhotoUrl":"https://example.local/after-014-1.jpg","repairNote":"虫蛀孔已补全"}]}'
+  -d '{"note":"全部修复完成","results":[{"damageId":"damage_demo_1","afterPhotoUrl":"https://example.local/after-014-1.jpg","repairNote":"虫蛀孔已补全"},{"damageId":"damage_demo_2","afterPhotoUrl":"https://example.local/after-014-2.jpg","repairNote":"撕裂处已加固"}]}'
 ```
 
 ## 闭环示例
