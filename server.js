@@ -27,6 +27,8 @@ const initialData = {
       status: "pending",
       repairNote: "",
       batchId: null,
+      reviewStatus: "approved",
+      rejectReason: "",
       createdAt: new Date().toISOString(),
       repairedAt: null
     },
@@ -40,6 +42,8 @@ const initialData = {
       status: "pending",
       repairNote: "",
       batchId: null,
+      reviewStatus: "review_pending",
+      rejectReason: "",
       createdAt: new Date().toISOString(),
       repairedAt: null
     }
@@ -53,8 +57,10 @@ const routes = [
   "POST /rubbings",
   "GET /rubbings/:id/damages",
   "POST /rubbings/:id/damages",
-  "GET /damages?status=&type=",
+  "GET /damages?status=&type=&reviewStatus=",
   "PATCH /damages/:id",
+  "POST /damages/:id/approve",
+  "POST /damages/:id/reject",
   "GET /batches",
   "POST /batches",
   "GET /batches/:id",
@@ -115,6 +121,14 @@ function required(body, fields) {
   }
 }
 
+function normalizeDamage(damage) {
+  return {
+    ...damage,
+    reviewStatus: damage.reviewStatus || "approved",
+    rejectReason: damage.rejectReason || ""
+  };
+}
+
 function findRubbing(db, rubbingId) {
   const rubbing = db.rubbings.find((item) => item.id === rubbingId);
   if (!rubbing) {
@@ -126,7 +140,7 @@ function findRubbing(db, rubbingId) {
 }
 
 function enrichBatch(db, batch) {
-  const damages = db.damages.filter((item) => batch.damageIds.includes(item.id));
+  const damages = db.damages.filter((item) => batch.damageIds.includes(item.id)).map(normalizeDamage);
   return {
     ...batch,
     plannedStartAt: batch.plannedStartAt || null,
@@ -239,7 +253,7 @@ async function handle(req, res) {
   if (rubbingDamagesMatch && req.method === "GET") {
     const rubbingId = rubbingDamagesMatch[1];
     findRubbing(db, rubbingId);
-    return send(res, 200, { data: db.damages.filter((item) => item.rubbingId === rubbingId) });
+    return send(res, 200, { data: db.damages.filter((item) => item.rubbingId === rubbingId).map(normalizeDamage) });
   }
 
   if (rubbingDamagesMatch && req.method === "POST") {
@@ -257,6 +271,8 @@ async function handle(req, res) {
       status: "pending",
       repairNote: "",
       batchId: null,
+      reviewStatus: "review_pending",
+      rejectReason: "",
       createdAt: new Date().toISOString(),
       repairedAt: null
     };
@@ -269,7 +285,7 @@ async function handle(req, res) {
   if (summaryMatch && req.method === "GET") {
     const rubbingId = summaryMatch[1];
     const rubbing = findRubbing(db, rubbingId);
-    const damages = db.damages.filter((item) => item.rubbingId === rubbingId);
+    const damages = db.damages.filter((item) => item.rubbingId === rubbingId).map(normalizeDamage);
     const batchIds = [...new Set(damages.map((d) => d.batchId).filter(Boolean))];
     const batches = batchIds.map((bid) => {
       const batch = db.batches.find((b) => b.id === bid);
@@ -309,7 +325,10 @@ async function handle(req, res) {
   if (req.method === "GET" && pathname === "/damages") {
     const status = url.searchParams.get("status");
     const type = url.searchParams.get("type");
-    const data = db.damages.filter((item) => (!status || item.status === status) && (!type || item.type === type));
+    const reviewStatus = url.searchParams.get("reviewStatus");
+    const data = db.damages
+      .map(normalizeDamage)
+      .filter((item) => (!status || item.status === status) && (!type || item.type === type) && (!reviewStatus || item.reviewStatus === reviewStatus));
     return send(res, 200, { data });
   }
 
@@ -328,7 +347,36 @@ async function handle(req, res) {
     });
     damage.repairedAt = damage.status === "repaired" ? new Date().toISOString() : damage.repairedAt;
     await writeDb(db);
-    return send(res, 200, { data: damage });
+    return send(res, 200, { data: normalizeDamage(damage) });
+  }
+
+  const approveMatch = pathname.match(/^\/damages\/([^/]+)\/approve$/);
+  if (approveMatch && req.method === "POST") {
+    const damage = db.damages.find((item) => item.id === approveMatch[1]);
+    if (!damage) return send(res, 404, { error: "缺损项不存在" });
+    const normalized = normalizeDamage(damage);
+    if (normalized.reviewStatus !== "review_pending") {
+      return send(res, 400, { error: "当前审核状态不是待审核，无法执行审核通过操作" });
+    }
+    damage.reviewStatus = "approved";
+    damage.rejectReason = "";
+    await writeDb(db);
+    return send(res, 200, { data: normalizeDamage(damage) });
+  }
+
+  const rejectMatch = pathname.match(/^\/damages\/([^/]+)\/reject$/);
+  if (rejectMatch && req.method === "POST") {
+    const damage = db.damages.find((item) => item.id === rejectMatch[1]);
+    if (!damage) return send(res, 404, { error: "缺损项不存在" });
+    const normalized = normalizeDamage(damage);
+    if (normalized.reviewStatus !== "review_pending") {
+      return send(res, 400, { error: "当前审核状态不是待审核，无法执行审核驳回操作" });
+    }
+    const body = await parseBody(req);
+    damage.reviewStatus = "rejected";
+    damage.rejectReason = body.reason || "";
+    await writeDb(db);
+    return send(res, 200, { data: normalizeDamage(damage) });
   }
 
   if (req.method === "GET" && pathname === "/batches") {
@@ -341,6 +389,18 @@ async function handle(req, res) {
     if (!Array.isArray(body.damageIds) || body.damageIds.length === 0) return send(res, 400, { error: "damageIds必须是非空数组" });
     const invalid = body.damageIds.filter((id) => !db.damages.find((damage) => damage.id === id));
     if (invalid.length) return send(res, 400, { error: `缺损项不存在：${invalid.join(", ")}` });
+
+    const unapprovedDamageIds = body.damageIds.filter((id) => {
+      const damage = db.damages.find((d) => d.id === id);
+      const normalized = normalizeDamage(damage);
+      return normalized.reviewStatus !== "approved";
+    });
+    if (unapprovedDamageIds.length) {
+      return send(res, 400, {
+        error: "以下缺损项尚未通过审核，不能加入修补批次",
+        unapprovedDamageIds
+      });
+    }
 
     const scheduledDamageIds = new Set();
     db.batches.forEach((b) => {
@@ -543,6 +603,8 @@ async function handle(req, res) {
         status: damage.status || "pending",
         repairNote: damage.repairNote || "",
         batchId: null,
+        reviewStatus: damage.reviewStatus || "review_pending",
+        rejectReason: damage.rejectReason || "",
         createdAt: new Date().toISOString(),
         repairedAt: null
       };
