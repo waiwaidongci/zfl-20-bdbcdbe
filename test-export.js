@@ -259,7 +259,7 @@ async function runTests() {
   assertEqual(damagesRes.status, 200, "缺损项导出返回 200");
 
   const damagesParsed = parseCsv(damagesRes.body);
-  assertEqual(damagesParsed.headers.length, 14, "缺损项CSV有14列");
+  assertEqual(damagesParsed.headers.length, 16, "缺损项CSV有16列");
   assert(damagesParsed.headers.includes("拓片编号"), "包含拓片编号列");
   assert(damagesParsed.headers.includes("所属批次"), "包含所属批次列");
   assert(damagesParsed.headers.includes("修补状态"), "包含修补状态列");
@@ -298,7 +298,7 @@ async function runTests() {
   assertEqual(resultsRes.status, 200, "修补结果导出返回 200");
 
   const resultsParsed = parseCsv(resultsRes.body);
-  assertEqual(resultsParsed.headers.length, 15, "修补结果CSV有15列");
+  assertEqual(resultsParsed.headers.length, 18, "修补结果CSV有18列");
   assert(resultsParsed.headers.includes("修补前影像数"), "包含修补前影像数列");
   assert(resultsParsed.headers.includes("修补中影像数"), "包含修补中影像数列");
   assert(resultsParsed.headers.includes("修补后影像数"), "包含修补后影像数列");
@@ -368,7 +368,7 @@ async function runTests() {
 
   const emptyDamagesRes = await httpRequestCsv("GET", "/export/damages");
   const emptyDamagesParsed = parseCsv(emptyDamagesRes.body);
-  assertEqual(emptyDamagesParsed.headers.length, 14, "空缺损结果仍有14列表头");
+  assertEqual(emptyDamagesParsed.headers.length, 16, "空缺损结果仍有16列表头");
 
   const emptyBatchesRes = await httpRequestCsv("GET", "/export/batches");
   const emptyBatchesParsed = parseCsv(emptyBatchesRes.body);
@@ -376,7 +376,7 @@ async function runTests() {
 
   const emptyResultsRes = await httpRequestCsv("GET", "/export/repair-results");
   const emptyResultsParsed = parseCsv(emptyResultsRes.body);
-  assertEqual(emptyResultsParsed.headers.length, 15, "空修补结果仍有15列表头");
+  assertEqual(emptyResultsParsed.headers.length, 18, "空修补结果仍有18列表头");
 
   await stopServer();
 
@@ -386,9 +386,9 @@ async function runTests() {
 
   const missingRes = await httpRequestCsv("GET", "/export/damages");
   const missingParsed = parseCsv(missingRes.body);
-  assertEqual(missingParsed.headers.length, 14, "字段缺失时仍有14列");
+  assertEqual(missingParsed.headers.length, 16, "字段缺失时仍有16列");
   assertEqual(missingParsed.rows.length, 1, "有1条数据");
-  assertEqual(missingParsed.rows[0].length, 14, "每行仍有14列");
+  assertEqual(missingParsed.rows[0].length, 16, "每行仍有16列");
 
   const reviewIdx = missingParsed.headers.indexOf("审核状态");
   const batchIdx = missingParsed.headers.indexOf("所属批次");

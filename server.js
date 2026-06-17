@@ -47,6 +47,8 @@ const initialData = {
       batchId: null,
       reviewStatus: "approved",
       rejectReason: "",
+      reviewedBy: "系统初始化",
+      reviewedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
       repairedAt: null
     },
@@ -62,6 +64,8 @@ const initialData = {
       batchId: null,
       reviewStatus: "review_pending",
       rejectReason: "",
+      reviewedBy: null,
+      reviewedAt: null,
       createdAt: new Date().toISOString(),
       repairedAt: null
     }
@@ -546,7 +550,9 @@ function normalizeDamage(damage) {
   return {
     ...damage,
     reviewStatus: damage.reviewStatus || "approved",
-    rejectReason: damage.rejectReason || ""
+    rejectReason: damage.rejectReason || "",
+    reviewedBy: damage.reviewedBy || null,
+    reviewedAt: damage.reviewedAt || null
   };
 }
 
@@ -782,6 +788,8 @@ function exportDamagesCsv(db, filters = {}) {
     { key: "type", label: "缺损类型" },
     { key: "statusText", label: "修补状态" },
     { key: "reviewStatusText", label: "审核状态" },
+    { key: "reviewedBy", label: "审核人" },
+    { key: "reviewedAt", label: "审核时间" },
     { key: "batchName", label: "所属批次" },
     { key: "repairNote", label: "修补说明" },
     { key: "rejectReason", label: "驳回原因" },
@@ -802,6 +810,8 @@ function exportDamagesCsv(db, filters = {}) {
       type: damage.type,
       statusText: getStatusText(damage.status),
       reviewStatusText: getStatusText(damage.reviewStatus),
+      reviewedBy: damage.reviewedBy || "",
+      reviewedAt: damage.reviewedAt || "",
       batchName: batch ? batch.name : "",
       repairNote: damage.repairNote || "",
       rejectReason: damage.rejectReason || "",
@@ -895,6 +905,9 @@ function exportRepairResultsCsv(db, filters = {}) {
     { key: "position", label: "缺损位置" },
     { key: "type", label: "缺损类型" },
     { key: "statusText", label: "修补状态" },
+    { key: "reviewStatusText", label: "审核状态" },
+    { key: "reviewedBy", label: "审核人" },
+    { key: "reviewedAt", label: "审核时间" },
     { key: "batchName", label: "所属批次" },
     { key: "repairNote", label: "修补说明" },
     { key: "beforeImageCount", label: "修补前影像数" },
@@ -917,6 +930,9 @@ function exportRepairResultsCsv(db, filters = {}) {
       position: damage.position,
       type: damage.type,
       statusText: getStatusText(damage.status),
+      reviewStatusText: getStatusText(damage.reviewStatus),
+      reviewedBy: damage.reviewedBy || "",
+      reviewedAt: damage.reviewedAt || "",
       batchName: batch ? batch.name : "",
       repairNote: damage.repairNote || "",
       beforeImageCount: images.before_repair.length,
@@ -1011,6 +1027,8 @@ async function handle(req, res) {
       batchId: null,
       reviewStatus: "review_pending",
       rejectReason: "",
+      reviewedBy: null,
+      reviewedAt: null,
       createdAt: new Date().toISOString(),
       repairedAt: null
     };
@@ -1116,8 +1134,11 @@ async function handle(req, res) {
     if (normalized.reviewStatus !== "review_pending") {
       return send(res, 400, { error: "当前审核状态不是待审核，无法执行审核通过操作" });
     }
+    const body = await parseBody(req);
     damage.reviewStatus = "approved";
     damage.rejectReason = "";
+    damage.reviewedBy = body.reviewedBy || "系统审核";
+    damage.reviewedAt = new Date().toISOString();
     await writeDb(db);
     return send(res, 200, { data: normalizeDamage(damage) });
   }
@@ -1136,6 +1157,8 @@ async function handle(req, res) {
     }
     damage.reviewStatus = "rejected";
     damage.rejectReason = body.reason.trim();
+    damage.reviewedBy = body.reviewedBy || "系统审核";
+    damage.reviewedAt = new Date().toISOString();
     await writeDb(db);
     return send(res, 200, { data: normalizeDamage(damage) });
   }
@@ -1594,6 +1617,8 @@ async function handle(req, res) {
         batchId: null,
         reviewStatus: damage.reviewStatus || "review_pending",
         rejectReason: damage.rejectReason || "",
+        reviewedBy: damage.reviewedBy || null,
+        reviewedAt: damage.reviewedAt || null,
         createdAt: new Date().toISOString(),
         repairedAt: null
       };
