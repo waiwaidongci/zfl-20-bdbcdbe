@@ -431,6 +431,76 @@ async function runTests() {
 
   await stopServer();
 
+  console.log("\n【场景11】批次完成（带归档影像）审计日志记录");
+  writeDb({
+    rubbings: [
+      { id: "r1", code: "TP-批次测试", source: "测试来源", paperSize: "42x68cm", note: "", createdAt: "2026-01-15T00:00:00.000Z" }
+    ],
+    damages: [
+      { id: "d1", rubbingId: "r1", position: "左上角", type: "虫蛀孔", beforePhotoUrl: "https://example.com/before1.jpg", afterPhotoUrl: "", status: "in_repair", repairNote: "", batchId: "b1", reviewStatus: "approved", rejectReason: "", reviewedBy: "审核员", reviewedAt: "2026-01-17T00:00:00.000Z", createdAt: "2026-01-16T00:00:00.000Z", repairedAt: null }
+    ],
+    batches: [
+      { id: "b1", name: "测试完成批次", status: "open", damageIds: ["d1"], note: "", plannedStartAt: null, plannedEndAt: null, responsible: null, createdAt: "2026-06-01T00:00:00.000Z", completedAt: null }
+    ],
+    repairImages: [],
+    batchSnapshots: []
+  });
+  clearAuditLog();
+  await startServer();
+
+  const completeRes = await httpRequest("POST", "/batches/b1/complete", {
+    archiveImages: [
+      { damageId: "d1", stage: "after_repair", url: "https://example.com/after-d1-1.jpg", isPrimary: true, description: "修补后全景" },
+      { damageId: "d1", stage: "during_repair", url: "https://example.com/during-d1-1.jpg", description: "修补中" }
+    ],
+    results: [
+      { damageId: "d1", afterPhotoUrl: "https://example.com/after-d1-1.jpg", repairNote: "虫蛀修补完成" }
+    ]
+  });
+  assertEqual(completeRes.status, 200, "批次完成返回 200");
+
+  const auditAfterComplete = await httpRequest("GET", "/audit-logs?actionType=complete_batch");
+  assertEqual(auditAfterComplete.body.total, 1, "有1条批次完成审计记录");
+  assertEqual(auditAfterComplete.body.data[0].actionType, "complete_batch", "动作类型为 complete_batch");
+  assertEqual(auditAfterComplete.body.data[0].targetType, "batch", "目标类型为 batch");
+  assertEqual(auditAfterComplete.body.data[0].targetId, "b1", "目标ID为 b1");
+  assert(auditAfterComplete.body.data[0].changeSummary.includes("完成批次"), "changeSummary 包含完成批次");
+  assert(auditAfterComplete.body.data[0].changeSummary.includes("归档影像"), "changeSummary 包含归档影像信息");
+  assert(auditAfterComplete.body.data[0].changeSummary.includes("2 张"), "changeSummary 包含归档影像数量");
+  assertNotNull(auditAfterComplete.body.data[0].extra, "有 extra 字段");
+  assertEqual(auditAfterComplete.body.data[0].extra.archivedImageCount, 2, "extra 中 archivedImageCount 为 2");
+  assertNotNull(auditAfterComplete.body.data[0].extra.snapshotId, "extra 中有 snapshotId");
+
+  await stopServer();
+
+  console.log("\n【场景12】批次完成（无归档影像）changeSummary 不含影像信息");
+  writeDb({
+    rubbings: [
+      { id: "r1", code: "TP-无影像", source: "测试", paperSize: "10x10cm", note: "", createdAt: "2026-01-15T00:00:00.000Z" }
+    ],
+    damages: [
+      { id: "d1", rubbingId: "r1", position: "中央", type: "霉斑", beforePhotoUrl: "https://example.com/before.jpg", afterPhotoUrl: "", status: "in_repair", repairNote: "", batchId: "b1", reviewStatus: "approved", rejectReason: "", reviewedBy: "审核员", reviewedAt: "2026-01-17T00:00:00.000Z", createdAt: "2026-01-16T00:00:00.000Z", repairedAt: null }
+    ],
+    batches: [
+      { id: "b1", name: "无影像批次", status: "open", damageIds: ["d1"], note: "", plannedStartAt: null, plannedEndAt: null, responsible: null, createdAt: "2026-06-01T00:00:00.000Z", completedAt: null }
+    ],
+    repairImages: [],
+    batchSnapshots: []
+  });
+  clearAuditLog();
+  await startServer();
+
+  const noImgCompleteRes = await httpRequest("POST", "/batches/b1/complete", {});
+  assertEqual(noImgCompleteRes.status, 200, "无影像批次完成返回 200");
+
+  const auditNoImg = await httpRequest("GET", "/audit-logs?actionType=complete_batch");
+  assertEqual(auditNoImg.body.total, 1, "有1条批次完成审计记录");
+  assert(auditNoImg.body.data[0].changeSummary.includes("完成批次"), "changeSummary 包含完成批次");
+  assert(!auditNoImg.body.data[0].changeSummary.includes("归档影像"), "无归档影像时 changeSummary 不包含影像信息");
+  assertEqual(auditNoImg.body.data[0].extra.archivedImageCount, 0, "extra 中 archivedImageCount 为 0");
+
+  await stopServer();
+
   console.log("\n=== 测试总结 ===");
   console.log(`通过: ${passed}, 失败: ${failed}`);
 

@@ -287,8 +287,13 @@ function buildChangeSummary(actionType, oldValues, newValues, extra) {
       return `审核驳回：缺损 ${newValues.id}，审核人 ${newValues.reviewedBy || "系统审核"}，驳回原因：${newValues.rejectReason || "未填写"}`;
     case AUDIT_ACTION_TYPES.CREATE_BATCH:
       return `创建批次：${newValues.name}，包含 ${newValues.damageIds.length} 项缺损`;
-    case AUDIT_ACTION_TYPES.COMPLETE_BATCH:
-      return `完成批次：${newValues.name}，共完成 ${newValues.damageIds.length} 项缺损修补`;
+    case AUDIT_ACTION_TYPES.COMPLETE_BATCH: {
+      const base = `完成批次：${newValues.name}，共完成 ${newValues.damageIds.length} 项缺损修补`;
+      if (extra?.archivedImageCount > 0) {
+        return `${base}，归档影像 ${extra.archivedImageCount} 张`;
+      }
+      return base;
+    }
     case AUDIT_ACTION_TYPES.ROLLBACK_BATCH:
       return `回滚批次：${oldValues.name}，恢复 ${oldValues.damageIds.length} 项缺损状态`;
     case AUDIT_ACTION_TYPES.ARCHIVE_IMAGES: {
@@ -1656,6 +1661,7 @@ async function handle(req, res) {
       targetId: batch.id,
       oldValues,
       newValues: { ...batch },
+      extra: { archivedImageCount: addedImageIds.length, snapshotId: snapshot.id },
       businessResult: { data: enrichedBatch, snapshotId: snapshot.id },
       statusCode: 200,
       res
