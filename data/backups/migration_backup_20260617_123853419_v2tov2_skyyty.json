@@ -1,0 +1,22 @@
+{
+  "meta": {
+    "type": "migration_backup",
+    "createdAt": "2026-06-17T04:38:53.419Z",
+    "fromVersion": 2,
+    "toVersion": 2,
+    "originalVersion": 2,
+    "originalValid": false,
+    "dataCounts": {
+      "rubbings": 0,
+      "damages": 0,
+      "batches": 0,
+      "repairImages": 0,
+      "batchSnapshots": 0
+    }
+  },
+  "data": {
+    "schemaVersion": 2,
+    "meta": {},
+    "something": "else"
+  }
+}

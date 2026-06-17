@@ -1,4 +1,4 @@
-const { readFile, writeFile, mkdir, readdir, stat, copyFile, unlink } = require("fs/promises");
+const { readFile, writeFile, mkdir, readdir, stat, copyFile, unlink, rename } = require("fs/promises");
 const path = require("path");
 
 const CURRENT_SCHEMA_VERSION = 2;
@@ -32,7 +32,16 @@ function detectSchemaVersion(data) {
     return { version: null, valid: false, reason: "数据不是有效对象" };
   }
   if (typeof data.schemaVersion === "number") {
-    return { version: data.schemaVersion, valid: true, reason: null };
+    const version = data.schemaVersion;
+    const structuralErrors = validateVersionedStructure(data, version);
+    if (structuralErrors.length > 0) {
+      return {
+        version,
+        valid: false,
+        reason: `v${version} 结构损坏: ${structuralErrors.join("; ")}`
+      };
+    }
+    return { version, valid: true, reason: null };
   }
   const legacyKeys = ["rubbings", "damages", "batches"];
   const hasLegacyStructure = legacyKeys.every((k) => Array.isArray(data[k]));
@@ -40,6 +49,30 @@ function detectSchemaVersion(data) {
     return { version: 0, valid: true, reason: "扁平结构（未版本化）" };
   }
   return { version: null, valid: false, reason: "无法识别的数据结构" };
+}
+
+function validateVersionedStructure(data, version) {
+  const errors = [];
+  if (!data || typeof data !== "object") {
+    errors.push("根节点不是对象");
+    return errors;
+  }
+  if (version === 1) {
+    const required = ["rubbings", "damages", "batches", "repairImages", "batchSnapshots"];
+    for (const k of required) {
+      if (!Array.isArray(data[k])) {
+        errors.push(`${k} 不是数组`);
+      }
+    }
+    return errors;
+  }
+  if (version === 2) {
+    return validateV2Structure(data);
+  }
+  if (version > 2) {
+    errors.push(`未知版本 v${version}，超出当前支持范围`);
+  }
+  return errors;
 }
 
 function buildV2EmptyStructure() {
@@ -134,7 +167,32 @@ async function readDbRaw() {
 }
 
 async function writeDbRaw(data) {
-  await writeFile(DB_FILE, JSON.stringify(data, null, 2));
+  const tempFile = path.join(path.dirname(DB_FILE), `.db.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.json`);
+  try {
+    const jsonStr = JSON.stringify(data, null, 2);
+    await writeFile(tempFile, jsonStr);
+    JSON.parse(await readFile(tempFile, "utf8"));
+    await renameWithFallback(tempFile, DB_FILE);
+  } catch (e) {
+    try {
+      await unlink(tempFile);
+    } catch (_) {
+    }
+    throw e;
+  }
+}
+
+async function renameWithFallback(src, dest) {
+  try {
+    await rename(src, dest);
+  } catch (renameErr) {
+    if (renameErr.code === "EXDEV" || renameErr.code === "EPERM") {
+      await copyFile(src, dest);
+      await unlink(src);
+    } else {
+      throw renameErr;
+    }
+  }
 }
 
 async function createMigrationBackup(fromVersion, toVersion) {
@@ -151,13 +209,15 @@ async function createMigrationBackup(fromVersion, toVersion) {
   const timestamp = formatTimestamp(new Date());
   const filename = getMigrationBackupFilename(timestamp, fromVersion, toVersion);
   const backupPath = path.join(BACKUP_DIR, filename);
+  const versionInfo = detectSchemaVersion(parsedData);
   const backupData = {
     meta: {
       type: "migration_backup",
       createdAt: new Date().toISOString(),
       fromVersion,
       toVersion,
-      originalVersion: detectSchemaVersion(parsedData).version,
+      originalVersion: versionInfo.version,
+      originalValid: versionInfo.valid,
       dataCounts: {
         rubbings: Array.isArray(parsedData.rubbings) ? parsedData.rubbings.length : (parsedData.entities?.rubbings?.length || 0),
         damages: Array.isArray(parsedData.damages) ? parsedData.damages.length : (parsedData.entities?.damages?.length || 0),
@@ -168,25 +228,40 @@ async function createMigrationBackup(fromVersion, toVersion) {
     },
     data: parsedData
   };
-  await writeFile(backupPath, JSON.stringify(backupData, null, 2));
+  const tempBackup = path.join(BACKUP_DIR, `.tmp_backup_${Date.now()}.json`);
+  try {
+    await writeFile(tempBackup, JSON.stringify(backupData, null, 2));
+    const verifyContent = JSON.parse(await readFile(tempBackup, "utf8"));
+    if (!verifyContent.data || !verifyContent.meta) {
+      throw new Error("备份文件结构验证失败");
+    }
+    await rename(tempBackup, backupPath);
+  } catch (e) {
+    try {
+      await unlink(tempBackup);
+    } catch (_) {
+    }
+    throw e;
+  }
   const stats = await stat(backupPath);
   return {
     filename,
     path: backupPath,
     createdAt: backupData.meta.createdAt,
     size: stats.size,
-    dataCounts: backupData.meta.dataCounts
+    dataCounts: backupData.meta.dataCounts,
+    originalValid: versionInfo.valid
   };
 }
 
 async function restoreFromBackupFile(backupPath) {
   const content = JSON.parse(await readFile(backupPath, "utf8"));
   const originalData = content.data || content;
-  const tempFile = path.join(BACKUP_DIR, `temp_restore_${Date.now()}.json`);
+  const tempFile = path.join(path.dirname(DB_FILE), `.db_restore_${Date.now()}.json`);
   try {
     await writeFile(tempFile, JSON.stringify(originalData, null, 2));
     JSON.parse(await readFile(tempFile, "utf8"));
-    await copyFile(tempFile, DB_FILE);
+    await renameWithFallback(tempFile, DB_FILE);
   } finally {
     try {
       await unlink(tempFile);
@@ -294,12 +369,19 @@ function migrateV1ToV2(oldData, migrationMeta) {
 
 async function migrateToLatest() {
   await ensureDirs();
+
+  let dbExists = true;
   try {
     await stat(DB_FILE);
   } catch (_) {
+    dbExists = false;
+  }
+
+  if (!dbExists) {
     const emptyV2 = buildV2EmptyStructure();
-    emptyV2.meta.createdAt = new Date().toISOString();
-    emptyV2.meta.lastModifiedAt = emptyV2.meta.createdAt;
+    const now = new Date().toISOString();
+    emptyV2.meta.createdAt = now;
+    emptyV2.meta.lastModifiedAt = now;
     await writeDbRaw(emptyV2);
     return {
       success: true,
@@ -310,14 +392,45 @@ async function migrateToLatest() {
       backup: null
     };
   }
-  const currentData = await readDbRaw();
-  const versionInfo = detectSchemaVersion(currentData);
-  if (!versionInfo.valid) {
-    const error = new Error(`数据结构无法识别: ${versionInfo.reason}`);
-    error.code = "INVALID_STRUCTURE";
+
+  let currentData;
+  try {
+    currentData = await readDbRaw();
+  } catch (readError) {
+    const error = new Error(`读取数据库失败，无法执行迁移: ${readError.message}`);
+    error.code = "READ_FAILED";
+    error.cause = readError;
     throw error;
   }
+
+  const versionInfo = detectSchemaVersion(currentData);
+  if (!versionInfo.valid) {
+    let backup = null;
+    try {
+      backup = await createMigrationBackup(versionInfo.version !== null ? versionInfo.version : "unknown", CURRENT_SCHEMA_VERSION);
+    } catch (_) {
+    }
+    let errorCode = "INVALID_STRUCTURE";
+    if (versionInfo.version !== null && versionInfo.version === CURRENT_SCHEMA_VERSION) {
+      errorCode = "V2_STRUCTURE_CORRUPTED";
+    } else if (versionInfo.version !== null) {
+      errorCode = `V${versionInfo.version}_STRUCTURE_CORRUPTED`;
+    }
+    const error = new Error(`数据结构无效: ${versionInfo.reason}`);
+    error.code = errorCode;
+    error.backupFile = backup?.filename || null;
+    error.detectedVersion = versionInfo.version;
+    throw error;
+  }
+
   if (versionInfo.version === CURRENT_SCHEMA_VERSION) {
+    const validationErrors = validateV2Structure(currentData);
+    if (validationErrors.length > 0) {
+      const error = new Error(`v2 结构校验失败: ${validationErrors.join("; ")}`);
+      error.code = "V2_STRUCTURE_CORRUPTED";
+      error.validationErrors = validationErrors;
+      throw error;
+    }
     return {
       success: true,
       action: "none",
@@ -327,15 +440,29 @@ async function migrateToLatest() {
       backup: null
     };
   }
+
   if (versionInfo.version < MIN_SUPPORTED_VERSION) {
-    const error = new Error(`数据版本 ${versionInfo.version} 低于最低支持版本 ${MIN_SUPPORTED_VERSION}，无法迁移`);
+    const error = new Error(`数据版本 v${versionInfo.version} 低于最低支持版本 v${MIN_SUPPORTED_VERSION}，无法迁移`);
     error.code = "UNSUPPORTED_VERSION";
     throw error;
   }
+
   const conflicts = detectPotentialConflicts(currentData, CURRENT_SCHEMA_VERSION);
-  const backup = await createMigrationBackup(versionInfo.version, CURRENT_SCHEMA_VERSION);
+
+  let backup;
+  try {
+    backup = await createMigrationBackup(versionInfo.version, CURRENT_SCHEMA_VERSION);
+  } catch (backupErr) {
+    const error = new Error(`创建迁移备份失败，已中止迁移: ${backupErr.message}`);
+    error.code = "BACKUP_CREATION_FAILED";
+    error.cause = backupErr;
+    throw error;
+  }
+
   let workingData = currentData;
   let migrationSteps = [];
+  let migrated = false;
+
   try {
     if (versionInfo.version === 0) {
       workingData = migrateV0ToV1(workingData);
@@ -349,21 +476,30 @@ async function migrateToLatest() {
       });
       migrationSteps.push("v1→v2");
     }
+
     const validationErrors = validateV2Structure(workingData);
     if (validationErrors.length > 0) {
       throw new Error(`迁移后结构校验失败: ${validationErrors.join("; ")}`);
     }
+
     await writeDbRaw(workingData);
+    migrated = true;
+
+    let verifyData;
     try {
-      const verifyData = await readDbRaw();
-      const verifyErrors = validateV2Structure(verifyData);
-      if (verifyErrors.length > 0) {
-        throw new Error(`写回后校验失败: ${verifyErrors.join("; ")}`);
-      }
-    } catch (verifyError) {
-      await restoreFromBackupFile(backup.path);
-      throw verifyError;
+      verifyData = await readDbRaw();
+    } catch (verifyReadErr) {
+      throw new Error(`写回后读取失败: ${verifyReadErr.message}`);
     }
+
+    const verifyErrors = validateV2Structure(verifyData);
+    if (verifyErrors.length > 0) {
+      throw new Error(`写回后结构校验失败: ${verifyErrors.join("; ")}`);
+    }
+    if (verifyData.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+      throw new Error(`写回后版本号异常: 期望 v${CURRENT_SCHEMA_VERSION}, 实际 v${verifyData.schemaVersion}`);
+    }
+
     return {
       success: true,
       action: "migrated",
@@ -375,19 +511,25 @@ async function migrateToLatest() {
       steps: migrationSteps
     };
   } catch (migrationError) {
-    try {
-      await restoreFromBackupFile(backup.path);
-    } catch (restoreError) {
-      const fatalError = new Error(
-        `迁移失败且回滚失败！原数据可能已损坏。请手动从备份文件恢复: ${backup.path}。迁移错误: ${migrationError.message}；回滚错误: ${restoreError.message}`
-      );
-      fatalError.code = "MIGRATION_AND_ROLLBACK_FAILED";
-      fatalError.backupFile = backup.filename;
-      throw fatalError;
+    if (migrated) {
+      try {
+        await restoreFromBackupFile(backup.path);
+      } catch (restoreError) {
+        const fatalError = new Error(
+          `迁移失败且回滚失败！原数据可能已损坏。请手动从备份文件恢复: ${backup.path}。迁移错误: ${migrationError.message}；回滚错误: ${restoreError.message}`
+        );
+        fatalError.code = "MIGRATION_AND_ROLLBACK_FAILED";
+        fatalError.backupFile = backup.filename;
+        fatalError.backupPath = backup.path;
+        fatalError.migrationError = migrationError.message;
+        fatalError.restoreError = restoreError.message;
+        throw fatalError;
+      }
     }
-    const error = new Error(`迁移失败，已回滚到原版本。错误: ${migrationError.message}`);
-    error.code = "MIGRATION_FAILED_ROLLED_BACK";
+    const error = new Error(`迁移失败${migrated ? "，已回滚到原版本" : "，数据未被修改"}。错误: ${migrationError.message}`);
+    error.code = migrated ? "MIGRATION_FAILED_ROLLED_BACK" : "MIGRATION_FAILED_NO_CHANGE";
     error.backupFile = backup.filename;
+    error.backupPath = backup.path;
     error.cause = migrationError;
     throw error;
   }

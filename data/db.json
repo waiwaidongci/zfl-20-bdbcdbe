@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "meta": {
     "createdAt": "2026-06-17T04:01:13.989Z",
-    "lastModifiedAt": "2026-06-17T04:06:35.786Z",
+    "lastModifiedAt": "2026-06-17T04:42:59.653Z",
     "migrationHistory": [
       {
         "fromVersion": 0,
@@ -13,7 +13,7 @@
       }
     ],
     "dataStatistics": {
-      "rubbings": 5,
+      "rubbings": 6,
       "damages": 7,
       "batches": 3,
       "repairImages": 5,
@@ -61,6 +61,14 @@
         "paperSize": "50x70cm",
         "note": "迁移后写入测试",
         "createdAt": "2026-06-17T04:06:35.786Z"
+      },
+      {
+        "id": "rubbing_mqhl4yx1_y17rwr",
+        "code": "FIX-TEST-001",
+        "source": "修复验证",
+        "paperSize": "50x50cm",
+        "note": "测试修复后写入",
+        "createdAt": "2026-06-17T04:42:59.653Z"
       }
     ],
     "damages": [

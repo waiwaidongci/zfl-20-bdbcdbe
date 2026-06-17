@@ -1,10 +1,9 @@
 const { spawn } = require("child_process");
 const http = require("http");
-const fs = require("fs");
 const net = require("net");
 const path = require("path");
+const testHelper = require("./test-helper");
 
-const DB_FILE = path.join(__dirname, "data", "db.json");
 const BACKUP_FILE = path.join(__dirname, "data", "db.json.exportbackup");
 const CONFIGURED_PORT = process.env.TEST_EXPORT_PORT ? Number(process.env.TEST_EXPORT_PORT) : null;
 
@@ -14,24 +13,15 @@ let passed = 0;
 let failed = 0;
 
 function backupDb() {
-  if (fs.existsSync(DB_FILE)) {
-    fs.copyFileSync(DB_FILE, BACKUP_FILE);
-  }
+  testHelper.backupDb(BACKUP_FILE);
 }
 
 function restoreDb() {
-  if (fs.existsSync(BACKUP_FILE)) {
-    fs.copyFileSync(BACKUP_FILE, DB_FILE);
-    fs.unlinkSync(BACKUP_FILE);
-  }
+  testHelper.restoreDb(BACKUP_FILE);
 }
 
 function writeDb(data) {
-  const dir = path.dirname(DB_FILE);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+  testHelper.writeDb(data);
 }
 
 function findAvailablePort() {

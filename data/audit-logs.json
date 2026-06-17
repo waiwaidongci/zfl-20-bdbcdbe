@@ -153,5 +153,22 @@
       "note": "迁移后写入测试",
       "createdAt": "2026-06-17T04:06:35.786Z"
     }
+  },
+  {
+    "id": "audit_mqhl4yx6_y6q57u",
+    "timestamp": "2026-06-17T04:42:59.658Z",
+    "actionType": "create_rubbing",
+    "targetType": "rubbing",
+    "targetId": "rubbing_mqhl4yx1_y17rwr",
+    "changeSummary": "创建拓片：编号 FIX-TEST-001，来源 修复验证",
+    "oldValues": null,
+    "newValues": {
+      "id": "rubbing_mqhl4yx1_y17rwr",
+      "code": "FIX-TEST-001",
+      "source": "修复验证",
+      "paperSize": "50x50cm",
+      "note": "测试修复后写入",
+      "createdAt": "2026-06-17T04:42:59.653Z"
+    }
   }
 ]

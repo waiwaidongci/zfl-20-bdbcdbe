@@ -1690,6 +1690,9 @@ const server = http.createServer((req, res) => {
 });
 
 (async function bootstrap() {
+  let startupMode = "normal";
+  let startupWarning = null;
+
   try {
     const migrationResult = await migrator.migrateToLatest();
     if (migrationResult.action === "migrated") {
@@ -1709,21 +1712,65 @@ const server = http.createServer((req, res) => {
     } else {
       console.log(`[数据迁移] ${migrationResult.message} (v${migrationResult.toVersion})`);
     }
-    server.listen(PORT, () => {
-      console.log(`Rubbing repair API running at http://127.0.0.1:${PORT}`);
-    });
   } catch (migrationError) {
     console.error(`[数据迁移] 失败: ${migrationError.message}`);
     if (migrationError.backupFile) {
-      console.error(`[数据迁移] 已生成备份文件: ${migrationError.backupFile}`);
+      console.error(`[数据迁移] 备份文件: ${migrationError.backupFile}`);
     }
-    if (migrationError.code === "MIGRATION_AND_ROLLBACK_FAILED") {
-      console.error(`[数据迁移] 严重错误: 迁移和回滚均失败，请从备份手动恢复！`);
-    } else {
-      console.error(`[数据迁移] 已回滚到原数据版本，服务器将正常启动但使用旧结构`);
-      server.listen(PORT, () => {
-        console.log(`Rubbing repair API running at http://127.0.0.1:${PORT} (迁移失败，使用旧数据结构)`);
-      });
+
+    switch (migrationError.code) {
+      case "MIGRATION_AND_ROLLBACK_FAILED":
+        console.error(`[数据迁移] 严重错误: 迁移和回滚均失败，数据可能已损坏！请从备份手动恢复`);
+        startupMode = "fatal";
+        startupWarning = "数据迁移严重失败，数据可能已损坏";
+        break;
+      case "V2_STRUCTURE_CORRUPTED":
+        console.warn(`[数据迁移] 警告: v2 结构校验失败，尝试以兼容模式启动`);
+        if (migrationError.validationErrors) {
+          migrationError.validationErrors.forEach((e, i) => {
+            console.warn(`  ${i + 1}. ${e}`);
+          });
+        }
+        startupMode = "degraded";
+        startupWarning = "v2 结构损坏，运行于降级兼容模式";
+        break;
+      case "INVALID_STRUCTURE":
+        console.error(`[数据迁移] 错误: 数据结构无法识别`);
+        startupMode = "invalid";
+        startupWarning = "数据结构无法识别";
+        break;
+      case "BACKUP_CREATION_FAILED":
+        console.error(`[数据迁移] 警告: 备份创建失败，迁移已中止，将以原结构启动`);
+        startupMode = "legacy";
+        startupWarning = "备份创建失败，使用原始数据结构";
+        break;
+      case "MIGRATION_FAILED_ROLLED_BACK":
+        console.error(`[数据迁移] 已回滚到原数据版本，将以旧结构启动`);
+        startupMode = "legacy";
+        startupWarning = "迁移失败已回滚，使用旧数据结构";
+        break;
+      case "MIGRATION_FAILED_NO_CHANGE":
+        console.error(`[数据迁移] 迁移失败，数据未被修改，将以原结构启动`);
+        startupMode = "legacy";
+        startupWarning = "迁移失败，使用原始数据结构";
+        break;
+      default:
+        console.error(`[数据迁移] 未知错误类型: ${migrationError.code}`);
+        startupMode = "unknown_error";
+        startupWarning = `迁移错误: ${migrationError.message}`;
     }
   }
+
+  if (startupMode === "fatal") {
+    console.error(`[启动中止] 数据处于不可恢复的损坏状态，请从备份文件手动恢复后再启动`);
+    process.exit(1);
+  }
+
+  server.listen(PORT, () => {
+    const modeSuffix = startupMode !== "normal" ? ` [${startupMode}]` : "";
+    console.log(`Rubbing repair API running at http://127.0.0.1:${PORT}${modeSuffix}`);
+    if (startupWarning) {
+      console.warn(`  警告: ${startupWarning}`);
+    }
+  });
 })();
