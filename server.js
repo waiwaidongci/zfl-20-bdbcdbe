@@ -1627,27 +1627,47 @@ async function handle(req, res) {
 
     const existingCodes = new Set(db.rubbings.map((r) => r.code));
     const submittedCodes = new Set();
-    const duplicateCodes = [];
-    const missingRubbingFields = [];
     const validRubbingIndices = new Set();
+    const rubbingResults = [];
 
     rubbings.forEach((rubbing, index) => {
+      const rowIndex = rubbing.rowIndex !== undefined ? rubbing.rowIndex : index;
+      const errors = [];
+      const warnings = [];
       const missing = ["code", "source", "paperSize"].filter(
         (field) => rubbing[field] === undefined || rubbing[field] === ""
       );
       if (missing.length) {
-        missingRubbingFields.push({ index, fields: missing });
+        errors.push(`缺少必填字段: ${missing.join(", ")}`);
       } else {
-        if (existingCodes.has(rubbing.code) || submittedCodes.has(rubbing.code)) {
-          duplicateCodes.push(rubbing.code);
+        if (existingCodes.has(rubbing.code)) {
+          errors.push(`拓片编号 "${rubbing.code}" 已存在于数据库中`);
+        } else if (submittedCodes.has(rubbing.code)) {
+          errors.push(`拓片编号 "${rubbing.code}" 在导入数据中重复出现`);
         } else {
           submittedCodes.add(rubbing.code);
           validRubbingIndices.add(index);
         }
       }
+      if (rubbing.note && rubbing.note.length > 500) {
+        warnings.push("备注内容超过500字符，可能被截断");
+      }
+      rubbingResults.push({
+        rowIndex,
+        status: errors.length === 0 ? "valid" : "invalid",
+        errors,
+        warnings,
+        data: {
+          code: rubbing.code || null,
+          source: rubbing.source || null,
+          paperSize: rubbing.paperSize || null,
+          note: rubbing.note || ""
+        }
+      });
     });
 
     const existingRubbingIds = new Set(db.rubbings.map((r) => r.id));
+    const existingRubbingCodes = new Set(db.rubbings.map((r) => r.code));
     const submittedRubbingRefs = new Map();
     rubbings.forEach((rubbing, index) => {
       if (validRubbingIndices.has(index) && rubbing.id) {
@@ -1658,28 +1678,79 @@ async function handle(req, res) {
       }
     });
 
-    const missingDamageFields = [];
-    const invalidDamageRubbingIds = [];
     const validDamageIndices = new Set();
+    const damageResults = [];
 
     damages.forEach((damage, index) => {
+      const rowIndex = damage.rowIndex !== undefined ? damage.rowIndex : index;
+      const errors = [];
+      const warnings = [];
       const missing = ["position", "type", "beforePhotoUrl"].filter(
         (field) => damage[field] === undefined || damage[field] === ""
       );
       if (missing.length) {
-        missingDamageFields.push({ index, fields: missing });
-        return;
+        errors.push(`缺少必填字段: ${missing.join(", ")}`);
       }
       const rubbingRef = damage.rubbingId;
-      const refExists =
-        rubbingRef &&
-        (existingRubbingIds.has(rubbingRef) ||
-          submittedRubbingRefs.has(rubbingRef));
-      if (!refExists) {
-        invalidDamageRubbingIds.push({ index, rubbingId: rubbingRef || null });
+      let resolvedRubbingIndex = null;
+      let resolvedRubbingRef = null;
+      let resolvedRubbingSource = null;
+      if (rubbingRef) {
+        if (existingRubbingIds.has(rubbingRef)) {
+          resolvedRubbingRef = rubbingRef;
+          resolvedRubbingSource = "database";
+          const matched = db.rubbings.find((r) => r.id === rubbingRef);
+          if (matched) {
+            resolvedRubbingIndex = matched.code;
+          }
+        } else if (existingRubbingCodes.has(rubbingRef)) {
+          resolvedRubbingRef = rubbingRef;
+          resolvedRubbingSource = "database";
+          resolvedRubbingIndex = rubbingRef;
+        } else if (submittedRubbingRefs.has(rubbingRef)) {
+          resolvedRubbingRef = rubbingRef;
+          resolvedRubbingSource = "import";
+          const idx = submittedRubbingRefs.get(rubbingRef);
+          resolvedRubbingIndex = rubbings[idx].code || rubbingRef;
+        } else {
+          errors.push(`关联的拓片 "${rubbingRef}" 不存在（既不在数据库中也不在本次导入的拓片数据中）`);
+        }
       } else {
+        errors.push("缺少关联拓片标识 rubbingId");
+      }
+      if (damage.reviewStatus && !["review_pending", "approved", "rejected"].includes(damage.reviewStatus)) {
+        warnings.push(`审核状态 "${damage.reviewStatus}" 不是标准值，将使用默认值 review_pending`);
+      }
+      if (damage.status && !["pending", "in_progress", "completed"].includes(damage.status)) {
+        warnings.push(`修补状态 "${damage.status}" 不是标准值，将使用默认值 pending`);
+      }
+      if (errors.length === 0) {
         validDamageIndices.add(index);
       }
+      damageResults.push({
+        rowIndex,
+        status: errors.length === 0 ? "valid" : "invalid",
+        errors,
+        warnings,
+        data: {
+          rubbingId: rubbingRef || null,
+          position: damage.position || null,
+          type: damage.type || null,
+          beforePhotoUrl: damage.beforePhotoUrl || null,
+          afterPhotoUrl: damage.afterPhotoUrl || "",
+          status: damage.status || "pending",
+          repairNote: damage.repairNote || "",
+          reviewStatus: damage.reviewStatus || "review_pending",
+          rejectReason: damage.rejectReason || ""
+        },
+        resolvedRubbing: resolvedRubbingRef
+          ? {
+              ref: resolvedRubbingRef,
+              source: resolvedRubbingSource,
+              identifier: resolvedRubbingIndex
+            }
+          : null
+      });
     });
 
     return {
@@ -1689,12 +1760,12 @@ async function handle(req, res) {
         rubbings: validRubbingIndices.size,
         damages: validDamageIndices.size
       },
-      duplicateCodes,
-      missingFields: {
-        rubbings: missingRubbingFields,
-        damages: missingDamageFields
+      total: {
+        rubbings: rubbings.length,
+        damages: damages.length
       },
-      invalidDamageRubbingIds,
+      rubbingResults,
+      damageResults,
       validRubbingIndices,
       validDamageIndices,
       submittedRubbingRefs
@@ -1705,20 +1776,23 @@ async function handle(req, res) {
     const body = await parseBody(req);
     const result = validateImportSubmission(body, db);
     return send(res, 200, {
+      total: result.total,
       importable: result.importable,
-      duplicateCodes: result.duplicateCodes,
-      missingFields: result.missingFields,
-      invalidDamageRubbingIds: result.invalidDamageRubbingIds
+      rubbings: result.rubbingResults,
+      damages: result.damageResults
     });
   }
 
   if (req.method === "POST" && pathname === "/import/confirm") {
     const body = await parseBody(req);
     const result = validateImportSubmission(body, db);
+    const onlyValid = body.onlyValid !== false;
 
     const idMap = new Map();
+    const rubbingRowMap = new Map();
     result.rubbings.forEach((rubbing, index) => {
-      if (!result.validRubbingIndices.has(index)) return;
+      if (onlyValid && !result.validRubbingIndices.has(index)) return;
+      const rowIndex = rubbing.rowIndex !== undefined ? rubbing.rowIndex : index;
       const newId = makeId("rubbing");
       if (rubbing.id) idMap.set(rubbing.id, newId);
       if (rubbing.code) idMap.set(rubbing.code, newId);
@@ -1732,11 +1806,14 @@ async function handle(req, res) {
       };
       db.rubbings.push(record);
       idMap.set(`idx_${index}`, newId);
+      rubbingRowMap.set(rowIndex, { id: newId, code: rubbing.code });
     });
 
+    const damageRowMap = new Map();
     const importedDamages = [];
     result.damages.forEach((damage, index) => {
-      if (!result.validDamageIndices.has(index)) return;
+      if (onlyValid && !result.validDamageIndices.has(index)) return;
+      const rowIndex = damage.rowIndex !== undefined ? damage.rowIndex : index;
       let rubbingId = damage.rubbingId;
       if (idMap.has(rubbingId)) rubbingId = idMap.get(rubbingId);
       const record = {
@@ -1758,19 +1835,35 @@ async function handle(req, res) {
       };
       db.damages.push(record);
       importedDamages.push(record);
+      damageRowMap.set(rowIndex, { id: record.id, rubbingId });
     });
 
     await writeDb(db);
+
+    const rubbingRowMapping = {};
+    rubbingRowMap.forEach((value, key) => {
+      rubbingRowMapping[key] = value;
+    });
+    const damageRowMapping = {};
+    damageRowMap.forEach((value, key) => {
+      damageRowMapping[key] = value;
+    });
+
     return send(res, 201, {
       imported: {
-        rubbings: result.importable.rubbings,
-        damages: result.importable.damages
+        rubbings: rubbingRowMap.size,
+        damages: damageRowMap.size
       },
-      duplicateCodes: result.duplicateCodes,
+      total: result.total,
       skipped: {
-        rubbings: result.rubbings.length - result.importable.rubbings,
-        damages: result.damages.length - result.importable.damages
-      }
+        rubbings: result.rubbings.length - rubbingRowMap.size,
+        damages: result.damages.length - damageRowMap.size
+      },
+      rowMapping: {
+        rubbings: rubbingRowMapping,
+        damages: damageRowMapping
+      },
+      onlyValid
     });
   }
 

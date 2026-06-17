@@ -844,5 +844,463 @@
       "createdAt": "2026-06-17T08:54:52.265Z",
       "completedAt": null
     }
+  },
+  {
+    "id": "audit_mqhvo421_bagpd7",
+    "timestamp": "2026-06-17T09:37:48.937Z",
+    "actionType": "complete_batch",
+    "targetType": "batch",
+    "targetId": "b1",
+    "changeSummary": "完成批次：六月修补批次，共完成 2 项缺损修补",
+    "oldValues": {
+      "id": "b1",
+      "name": "六月修补批次",
+      "status": "open",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": null,
+      "plannedStartAt": "2026-06-10T00:00:00.000Z",
+      "plannedEndAt": "2026-06-15T00:00:00.000Z",
+      "responsible": "张师傅"
+    },
+    "newValues": {
+      "id": "b1",
+      "name": "六月修补批次",
+      "status": "completed",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "批次完成",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": "2026-06-17T09:37:48.930Z",
+      "plannedStartAt": "2026-06-10T00:00:00.000Z",
+      "plannedEndAt": "2026-06-15T00:00:00.000Z",
+      "responsible": "张师傅"
+    }
+  },
+  {
+    "id": "audit_mqhvo56e_ipx9di",
+    "timestamp": "2026-06-17T09:37:50.390Z",
+    "actionType": "update_damage",
+    "targetType": "damage",
+    "targetId": "d1",
+    "changeSummary": "更新缺损：修补说明已更新",
+    "oldValues": {
+      "id": "d1",
+      "rubbingId": "r1",
+      "position": "左上角",
+      "type": "虫蛀孔",
+      "beforePhotoUrl": "x.jpg",
+      "afterPhotoUrl": "",
+      "status": "pending",
+      "repairNote": "",
+      "batchId": null,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "repairedAt": null,
+      "reviewStatus": "approved",
+      "rejectReason": ""
+    },
+    "newValues": {
+      "id": "d1",
+      "rubbingId": "r1",
+      "position": "左上角",
+      "type": "虫蛀孔",
+      "beforePhotoUrl": "x.jpg",
+      "afterPhotoUrl": "",
+      "status": "pending",
+      "repairNote": "已修补完成",
+      "batchId": null,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "repairedAt": null,
+      "reviewStatus": "approved",
+      "rejectReason": ""
+    }
+  },
+  {
+    "id": "audit_mqhvo62t_xed1bk",
+    "timestamp": "2026-06-17T09:37:51.557Z",
+    "actionType": "complete_batch",
+    "targetType": "batch",
+    "targetId": "b1",
+    "changeSummary": "完成批次：六月修补批次，共完成 2 项缺损修补",
+    "oldValues": {
+      "id": "b1",
+      "name": "六月修补批次",
+      "status": "open",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": null,
+      "plannedStartAt": "2026-06-10T00:00:00.000Z",
+      "plannedEndAt": "2026-06-15T00:00:00.000Z",
+      "responsible": "张师傅"
+    },
+    "newValues": {
+      "id": "b1",
+      "name": "六月修补批次",
+      "status": "completed",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "完成",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": "2026-06-17T09:37:51.315Z",
+      "plannedStartAt": "2026-06-10T00:00:00.000Z",
+      "plannedEndAt": "2026-06-15T00:00:00.000Z",
+      "responsible": "张师傅"
+    }
+  },
+  {
+    "id": "audit_mqhvo8ju_2i5xlb",
+    "timestamp": "2026-06-17T09:37:54.762Z",
+    "actionType": "update_damage",
+    "targetType": "damage",
+    "targetId": "d1",
+    "changeSummary": "更新缺损：状态: in_repair → pending",
+    "oldValues": {
+      "id": "d1",
+      "rubbingId": "r1",
+      "position": "左上角",
+      "type": "虫蛀孔",
+      "beforePhotoUrl": "x.jpg",
+      "afterPhotoUrl": "",
+      "status": "in_repair",
+      "repairNote": "",
+      "batchId": "b1",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "repairedAt": null,
+      "reviewStatus": "approved",
+      "rejectReason": ""
+    },
+    "newValues": {
+      "id": "d1",
+      "rubbingId": "r1",
+      "position": "左上角",
+      "type": "虫蛀孔",
+      "beforePhotoUrl": "x.jpg",
+      "afterPhotoUrl": "",
+      "status": "pending",
+      "repairNote": "",
+      "batchId": "b1",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "repairedAt": null,
+      "reviewStatus": "approved",
+      "rejectReason": ""
+    }
+  },
+  {
+    "id": "audit_mqhvobm8_egfazs",
+    "timestamp": "2026-06-17T09:37:58.736Z",
+    "actionType": "complete_batch",
+    "targetType": "batch",
+    "targetId": "b1",
+    "changeSummary": "完成批次：六月修补批次，共完成 2 项缺损修补",
+    "oldValues": {
+      "id": "b1",
+      "name": "六月修补批次",
+      "status": "open",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": null,
+      "plannedStartAt": "2026-06-10T00:00:00.000Z",
+      "plannedEndAt": "2026-06-15T00:00:00.000Z",
+      "responsible": "张师傅"
+    },
+    "newValues": {
+      "id": "b1",
+      "name": "六月修补批次",
+      "status": "completed",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "完成",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": "2026-06-17T09:37:58.724Z",
+      "plannedStartAt": "2026-06-10T00:00:00.000Z",
+      "plannedEndAt": "2026-06-15T00:00:00.000Z",
+      "responsible": "张师傅"
+    }
+  },
+  {
+    "id": "audit_mqhw129f_v15x24",
+    "timestamp": "2026-06-17T09:47:53.139Z",
+    "actionType": "complete_batch",
+    "targetType": "batch",
+    "targetId": "b1",
+    "changeSummary": "完成批次：六月修补批次，共完成 2 项缺损修补",
+    "oldValues": {
+      "id": "b1",
+      "name": "六月修补批次",
+      "status": "open",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": null,
+      "plannedStartAt": "2026-06-10T00:00:00.000Z",
+      "plannedEndAt": "2026-06-15T00:00:00.000Z",
+      "responsible": "张师傅"
+    },
+    "newValues": {
+      "id": "b1",
+      "name": "六月修补批次",
+      "status": "completed",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "批次完成",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": "2026-06-17T09:47:53.078Z",
+      "plannedStartAt": "2026-06-10T00:00:00.000Z",
+      "plannedEndAt": "2026-06-15T00:00:00.000Z",
+      "responsible": "张师傅"
+    }
+  },
+  {
+    "id": "audit_mqhw13xv_92itm5",
+    "timestamp": "2026-06-17T09:47:55.315Z",
+    "actionType": "complete_batch",
+    "targetType": "batch",
+    "targetId": "b1",
+    "changeSummary": "完成批次：六月第一批修补，共完成 3 项缺损修补",
+    "oldValues": {
+      "id": "b1",
+      "name": "六月第一批修补",
+      "status": "completed",
+      "damageIds": [
+        "d1",
+        "d2",
+        "d6"
+      ],
+      "note": "重点处理虫蛀和撕裂问题",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": "2026-06-15T00:00:00.000Z",
+      "plannedStartAt": "2026-06-05T00:00:00.000Z",
+      "plannedEndAt": "2026-06-20T00:00:00.000Z",
+      "responsible": "张师傅"
+    },
+    "newValues": {
+      "id": "b1",
+      "name": "六月第一批修补",
+      "status": "completed",
+      "damageIds": [
+        "d1",
+        "d2",
+        "d6"
+      ],
+      "note": "重点处理虫蛀和撕裂问题",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": "2026-06-17T09:47:55.307Z",
+      "plannedStartAt": "2026-06-05T00:00:00.000Z",
+      "plannedEndAt": "2026-06-20T00:00:00.000Z",
+      "responsible": "张师傅"
+    }
+  },
+  {
+    "id": "audit_mqhw1ys3_ixyroe",
+    "timestamp": "2026-06-17T09:48:35.283Z",
+    "actionType": "complete_batch",
+    "targetType": "batch",
+    "targetId": "b1",
+    "changeSummary": "完成批次：六月修补批次，共完成 2 项缺损修补",
+    "oldValues": {
+      "id": "b1",
+      "name": "六月修补批次",
+      "status": "open",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": null,
+      "plannedStartAt": "2026-06-10T00:00:00.000Z",
+      "plannedEndAt": "2026-06-15T00:00:00.000Z",
+      "responsible": "张师傅"
+    },
+    "newValues": {
+      "id": "b1",
+      "name": "六月修补批次",
+      "status": "completed",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "批次完成",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": "2026-06-17T09:48:35.280Z",
+      "plannedStartAt": "2026-06-10T00:00:00.000Z",
+      "plannedEndAt": "2026-06-15T00:00:00.000Z",
+      "responsible": "张师傅"
+    }
+  },
+  {
+    "id": "audit_mqhw202r_lodkvg",
+    "timestamp": "2026-06-17T09:48:36.963Z",
+    "actionType": "update_damage",
+    "targetType": "damage",
+    "targetId": "d1",
+    "changeSummary": "更新缺损：修补说明已更新",
+    "oldValues": {
+      "id": "d1",
+      "rubbingId": "r1",
+      "position": "左上角",
+      "type": "虫蛀孔",
+      "beforePhotoUrl": "x.jpg",
+      "afterPhotoUrl": "",
+      "status": "pending",
+      "repairNote": "",
+      "batchId": null,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "repairedAt": null,
+      "reviewStatus": "approved",
+      "rejectReason": ""
+    },
+    "newValues": {
+      "id": "d1",
+      "rubbingId": "r1",
+      "position": "左上角",
+      "type": "虫蛀孔",
+      "beforePhotoUrl": "x.jpg",
+      "afterPhotoUrl": "",
+      "status": "pending",
+      "repairNote": "已修补完成",
+      "batchId": null,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "repairedAt": null,
+      "reviewStatus": "approved",
+      "rejectReason": ""
+    }
+  },
+  {
+    "id": "audit_mqhw20il_ajrrli",
+    "timestamp": "2026-06-17T09:48:37.533Z",
+    "actionType": "complete_batch",
+    "targetType": "batch",
+    "targetId": "b1",
+    "changeSummary": "完成批次：六月修补批次，共完成 2 项缺损修补",
+    "oldValues": {
+      "id": "b1",
+      "name": "六月修补批次",
+      "status": "open",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": null,
+      "plannedStartAt": "2026-06-10T00:00:00.000Z",
+      "plannedEndAt": "2026-06-15T00:00:00.000Z",
+      "responsible": "张师傅"
+    },
+    "newValues": {
+      "id": "b1",
+      "name": "六月修补批次",
+      "status": "completed",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "完成",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": "2026-06-17T09:48:37.531Z",
+      "plannedStartAt": "2026-06-10T00:00:00.000Z",
+      "plannedEndAt": "2026-06-15T00:00:00.000Z",
+      "responsible": "张师傅"
+    }
+  },
+  {
+    "id": "audit_mqhw22vc_i2gz5e",
+    "timestamp": "2026-06-17T09:48:40.584Z",
+    "actionType": "update_damage",
+    "targetType": "damage",
+    "targetId": "d1",
+    "changeSummary": "更新缺损：状态: in_repair → pending",
+    "oldValues": {
+      "id": "d1",
+      "rubbingId": "r1",
+      "position": "左上角",
+      "type": "虫蛀孔",
+      "beforePhotoUrl": "x.jpg",
+      "afterPhotoUrl": "",
+      "status": "in_repair",
+      "repairNote": "",
+      "batchId": "b1",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "repairedAt": null,
+      "reviewStatus": "approved",
+      "rejectReason": ""
+    },
+    "newValues": {
+      "id": "d1",
+      "rubbingId": "r1",
+      "position": "左上角",
+      "type": "虫蛀孔",
+      "beforePhotoUrl": "x.jpg",
+      "afterPhotoUrl": "",
+      "status": "pending",
+      "repairNote": "",
+      "batchId": "b1",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "repairedAt": null,
+      "reviewStatus": "approved",
+      "rejectReason": ""
+    }
+  },
+  {
+    "id": "audit_mqhw24uu_fsqx5j",
+    "timestamp": "2026-06-17T09:48:43.158Z",
+    "actionType": "complete_batch",
+    "targetType": "batch",
+    "targetId": "b1",
+    "changeSummary": "完成批次：六月修补批次，共完成 2 项缺损修补",
+    "oldValues": {
+      "id": "b1",
+      "name": "六月修补批次",
+      "status": "open",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": null,
+      "plannedStartAt": "2026-06-10T00:00:00.000Z",
+      "plannedEndAt": "2026-06-15T00:00:00.000Z",
+      "responsible": "张师傅"
+    },
+    "newValues": {
+      "id": "b1",
+      "name": "六月修补批次",
+      "status": "completed",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "完成",
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "completedAt": "2026-06-17T09:48:43.140Z",
+      "plannedStartAt": "2026-06-10T00:00:00.000Z",
+      "plannedEndAt": "2026-06-15T00:00:00.000Z",
+      "responsible": "张师傅"
+    }
   }
 ]

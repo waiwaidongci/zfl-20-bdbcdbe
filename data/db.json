@@ -1,12 +1,12 @@
 {
   "schemaVersion": 2,
   "meta": {
-    "createdAt": "2026-06-17T08:46:57.339Z",
-    "lastModifiedAt": "2026-06-17T08:46:57.339Z",
+    "createdAt": "2026-06-17T09:48:00.642Z",
+    "lastModifiedAt": "2026-06-17T10:03:43.344Z",
     "migrationHistory": [],
     "dataStatistics": {
-      "rubbings": 3,
-      "damages": 6,
+      "rubbings": 5,
+      "damages": 8,
       "batches": 2,
       "repairImages": 5,
       "batchSnapshots": 0
@@ -37,6 +37,22 @@
         "paperSize": "80x120cm",
         "note": "大面积风化",
         "createdAt": "2026-03-10T00:00:00.000Z"
+      },
+      {
+        "id": "rubbing_mqhwlfc3_axvwfo",
+        "code": "TP-宋-087",
+        "source": "西安碑林馆藏",
+        "paperSize": "60x90cm",
+        "note": "字迹清晰",
+        "createdAt": "2026-06-17T10:03:43.204Z"
+      },
+      {
+        "id": "rubbing_mqhwlffc_yolkfe",
+        "code": "TP-宋-088",
+        "source": "上海博物馆",
+        "paperSize": "50x80cm",
+        "note": "",
+        "createdAt": "2026-06-17T10:03:43.330Z"
       }
     ],
     "damages": [
@@ -129,6 +145,40 @@
         "repairedAt": "2026-06-11T00:00:00.000Z",
         "reviewStatus": "rejected",
         "rejectReason": "修补颜色偏差较大"
+      },
+      {
+        "id": "damage_mqhwlffo_mtpiqg",
+        "rubbingId": "rubbing_mqhwlfc3_axvwfo",
+        "position": "右边缘中部",
+        "type": "折裂",
+        "beforePhotoUrl": "https://example.local/before-087-1.jpg",
+        "afterPhotoUrl": "",
+        "status": "pending",
+        "repairNote": "",
+        "batchId": null,
+        "reviewStatus": "review_pending",
+        "rejectReason": "",
+        "reviewedBy": null,
+        "reviewedAt": null,
+        "createdAt": "2026-06-17T10:03:43.332Z",
+        "repairedAt": null
+      },
+      {
+        "id": "damage_mqhwlffo_mfxvy6",
+        "rubbingId": "rubbing_mqhwlffc_yolkfe",
+        "position": "左下角",
+        "type": "污渍",
+        "beforePhotoUrl": "https://example.local/before-088-1.jpg",
+        "afterPhotoUrl": "",
+        "status": "pending",
+        "repairNote": "",
+        "batchId": null,
+        "reviewStatus": "not_a_valid_status",
+        "rejectReason": "",
+        "reviewedBy": null,
+        "reviewedAt": null,
+        "createdAt": "2026-06-17T10:03:43.332Z",
+        "repairedAt": null
       }
     ],
     "batches": [
