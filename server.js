@@ -115,12 +115,13 @@ async function ensureBackupDir() {
 }
 
 function formatBackupTimestamp(date) {
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+  const pad = (n, len = 2) => String(n).padStart(len, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}${pad(date.getMilliseconds(), 3)}`;
 }
 
 function getBackupFilename(timestamp) {
-  return `backup_${timestamp}.json`;
+  const suffix = Math.random().toString(36).slice(2, 8);
+  return `backup_${timestamp}_${suffix}.json`;
 }
 
 function validateDataStructure(data) {
@@ -130,6 +131,30 @@ function validateDataStructure(data) {
     if (!Array.isArray(data[key])) return false;
   }
   return true;
+}
+
+function sanitizeBackupFilename(filename) {
+  if (!filename || typeof filename !== "string") {
+    const error = new Error("备份文件名无效");
+    error.code = BACKUP_ERRORS.BACKUP_NOT_FOUND;
+    error.status = 400;
+    throw error;
+  }
+  const SAFE_PATTERN = /^backup_\d{8}_\d{6,9}[_a-z0-9]*\.json$/;
+  if (!SAFE_PATTERN.test(filename)) {
+    const error = new Error("备份文件名格式无效，只允许字母数字和下划线");
+    error.code = BACKUP_ERRORS.BACKUP_NOT_FOUND;
+    error.status = 400;
+    throw error;
+  }
+  const resolved = path.resolve(BACKUP_DIR, filename);
+  if (!resolved.startsWith(path.resolve(BACKUP_DIR) + path.sep) && resolved !== path.resolve(BACKUP_DIR)) {
+    const error = new Error("备份文件路径越界");
+    error.code = BACKUP_ERRORS.BACKUP_NOT_FOUND;
+    error.status = 400;
+    throw error;
+  }
+  return filename;
 }
 
 async function createBackup() {
@@ -201,6 +226,7 @@ async function listBackups() {
 }
 
 async function readBackupFile(filename) {
+  sanitizeBackupFilename(filename);
   await ensureBackupDir();
   const backupPath = path.join(BACKUP_DIR, filename);
   let content;
@@ -1306,7 +1332,7 @@ async function handle(req, res) {
 
   const backupValidateMatch = pathname.match(/^\/backups\/([^/]+)\/validate$/);
   if (backupValidateMatch && req.method === "GET") {
-    const filename = decodeURIComponent(backupValidateMatch[1]);
+    const filename = sanitizeBackupFilename(decodeURIComponent(backupValidateMatch[1]));
     try {
       const result = await validateBackup(filename);
       return send(res, 200, { data: result });
@@ -1320,7 +1346,7 @@ async function handle(req, res) {
 
   const backupRestoreMatch = pathname.match(/^\/backups\/([^/]+)\/restore$/);
   if (backupRestoreMatch && req.method === "POST") {
-    const filename = decodeURIComponent(backupRestoreMatch[1]);
+    const filename = sanitizeBackupFilename(decodeURIComponent(backupRestoreMatch[1]));
     try {
       const result = await restoreFromBackup(filename);
       return send(res, 200, { data: result });
