@@ -19,12 +19,15 @@ PORT=3020 node server.js
 - `PATCH /damages/:id`
 - `POST /damages/:id/approve`
 - `POST /damages/:id/reject`
-- `GET /batches`
+- `GET /batches?status=&responsible=`
 - `POST /batches`
 - `GET /batches/:id`
 - `POST /batches/:id/complete`
+- `POST /batches/:id/rollback`
 - `POST /import/precheck`
 - `POST /import/confirm`
+- `GET /dashboard/repair-workbench?type=&rubbingId=&batchId=&responsible=`
+- `GET /schedules?startDate=&endDate=&status=&responsible=`
 - `GET /rubbings/:id/summary`
 
 ## 缺损项审核流程
@@ -225,3 +228,67 @@ curl -X POST http://127.0.0.1:3020/import/precheck \
     ]
   }'
 ```
+
+## 批次负责人筛选与排程查询示例
+
+### 创建带负责人的修补批次
+
+```bash
+curl -X POST http://127.0.0.1:3020/batches \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name":"张工负责的六月批次",
+    "damageIds":["damage_demo_1"],
+    "responsible":"张工",
+    "plannedStartAt":"2026-06-10T00:00:00.000Z",
+    "plannedEndAt":"2026-06-20T23:59:59.999Z"
+  }'
+```
+
+### 按负责人筛选批次列表
+
+```bash
+# 查询张工负责的所有批次
+curl "http://127.0.0.1:3020/batches?responsible=张工"
+
+# 查询未分配负责人的批次（传空字符串）
+curl "http://127.0.0.1:3020/batches?responsible="
+
+# 组合筛选：张工负责且进行中的批次
+curl "http://127.0.0.1:3020/batches?responsible=张工&status=open"
+```
+
+### 按负责人筛选排程
+
+```bash
+# 查询张工在 2026 年 6 月的排程
+curl "http://127.0.0.1:3020/schedules?startDate=2026-06-01&endDate=2026-06-30&responsible=张工"
+
+# 查询未分配负责人的排程
+curl "http://127.0.0.1:3020/schedules?startDate=2026-06-01&endDate=2026-06-30&responsible="
+```
+
+## 修补工作台看板负责人聚合统计
+
+### 查看完整看板（含按负责人聚合）
+
+```bash
+curl http://127.0.0.1:3020/dashboard/repair-workbench
+```
+
+返回数据中新增 `byResponsible` 字段，每个负责人包含：
+- `responsible`：负责人名称（旧批次无负责人时显示为"未分配"）
+- `batchCount`：负责的批次数
+- `damageCount`：负责的缺损总数
+- `overdueCount`：已逾期未完成的批次数
+- `openBatchCount`：进行中的批次数
+- `completedBatchCount`：已完成的批次数
+
+### 按负责人筛选看板数据
+
+```bash
+# 只看张工相关的统计
+curl "http://127.0.0.1:3020/dashboard/repair-workbench?responsible=张工"
+```
+
+> 说明：没有设置 `responsible` 字段的旧批次在筛选时不会被过滤掉（不传 `responsible` 参数时返回全部），在看板聚合统计中统一归类为"未分配"。

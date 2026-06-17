@@ -187,5 +187,69 @@
       "note": "验证写入",
       "createdAt": "2026-06-17T05:40:55.875Z"
     }
+  },
+  {
+    "id": "audit_mqhras2m_wxeb6n",
+    "timestamp": "2026-06-17T07:35:28.414Z",
+    "actionType": "create_batch",
+    "targetType": "batch",
+    "targetId": "batch_mqhras2h_fayq10",
+    "changeSummary": "创建批次：六月排程批次，包含 2 项缺损",
+    "oldValues": null,
+    "newValues": {
+      "id": "batch_mqhras2h_fayq10",
+      "name": "六月排程批次",
+      "status": "open",
+      "damageIds": [
+        "d1",
+        "d2"
+      ],
+      "note": "",
+      "plannedStartAt": "2026-06-20T09:00:00.000Z",
+      "plannedEndAt": "2026-06-25T18:00:00.000Z",
+      "responsible": "张师傅",
+      "createdAt": "2026-06-17T07:35:28.409Z",
+      "completedAt": null
+    }
+  },
+  {
+    "id": "audit_mqhrasnv_ml0lpe",
+    "timestamp": "2026-06-17T07:35:29.179Z",
+    "actionType": "create_batch",
+    "targetType": "batch",
+    "targetId": "batch_mqhrasno_jt166m",
+    "changeSummary": "创建批次：新批次，包含 1 项缺损",
+    "oldValues": null,
+    "newValues": {
+      "id": "batch_mqhrasno_jt166m",
+      "name": "新批次",
+      "status": "open",
+      "damageIds": [
+        "d1"
+      ],
+      "note": "",
+      "plannedStartAt": "2026-07-01T00:00:00.000Z",
+      "plannedEndAt": "2026-07-05T00:00:00.000Z",
+      "responsible": "张师傅",
+      "createdAt": "2026-06-17T07:35:29.172Z",
+      "completedAt": null
+    }
+  },
+  {
+    "id": "audit_mqhrciug_5hq4k9",
+    "timestamp": "2026-06-17T07:36:49.768Z",
+    "actionType": "create_rubbing",
+    "targetType": "rubbing",
+    "targetId": "rubbing_mqhrciue_wb9mb8",
+    "changeSummary": "创建拓片：编号 TP-清-014，来源 地方碑刻残页",
+    "oldValues": null,
+    "newValues": {
+      "id": "rubbing_mqhrciue_wb9mb8",
+      "code": "TP-清-014",
+      "source": "地方碑刻残页",
+      "paperSize": "42x68cm",
+      "note": "",
+      "createdAt": "2026-06-17T07:36:49.766Z"
+    }
   }
 ]

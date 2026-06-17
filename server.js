@@ -87,16 +87,16 @@ const routes = [
   "POST /damages/:id/reject",
   "GET /damages/:id/images",
   "POST /damages/:id/images",
-  "GET /batches",
+  "GET /batches?status=&responsible=",
   "POST /batches",
   "GET /batches/:id",
   "POST /batches/:id/complete",
   "POST /batches/:id/rollback",
   "POST /import/precheck",
   "POST /import/confirm",
-  "GET /dashboard/repair-workbench?type=&rubbingId=&batchId=",
+  "GET /dashboard/repair-workbench?type=&rubbingId=&batchId=&responsible=",
   "GET /rubbings/:id/summary",
-  "GET /schedules?startDate=&endDate=&status=",
+  "GET /schedules?startDate=&endDate=&status=&responsible=",
   "GET /export/rubbings?startDate=&endDate=",
   "GET /export/damages?status=&type=&startDate=&endDate=",
   "GET /export/batches?status=&startDate=&endDate=",
@@ -615,12 +615,23 @@ function enrichBatch(db, batch) {
 }
 
 function computeRepairWorkbenchDashboard(db, filters = {}) {
-  const { type, rubbingId, batchId } = filters;
+  const { type, rubbingId, batchId, responsible } = filters;
+
+  const filteredBatches = db.batches.filter((b) => {
+    if (batchId) return b.id === batchId;
+    if (rubbingId) return b.damageIds.some((did) => db.damages.find((d) => d.id === did && d.rubbingId === rubbingId));
+    if (responsible) return (b.responsible || null) === responsible;
+    return true;
+  });
+
+  const filteredBatchIds = new Set(filteredBatches.map((b) => b.id));
 
   const filteredDamages = db.damages.filter((damage) => {
     if (type && damage.type !== type) return false;
     if (rubbingId && damage.rubbingId !== rubbingId) return false;
     if (batchId && damage.batchId !== batchId) return false;
+    if (responsible && damage.batchId) return filteredBatchIds.has(damage.batchId);
+    if (responsible && !damage.batchId) return false;
     return true;
   });
 
@@ -649,18 +660,40 @@ function computeRepairWorkbenchDashboard(db, filters = {}) {
 
   const byType = Array.from(typeMap.values()).sort((a, b) => b.total - a.total);
 
-  const activeBatches = db.batches.filter((b) => {
-    if (batchId) return b.id === batchId;
-    if (rubbingId) return b.damageIds.some((did) => db.damages.find((d) => d.id === did && d.rubbingId === rubbingId));
-    return true;
+  const now = new Date();
+  const byResponsibleMap = new Map();
+  filteredBatches.forEach((batch) => {
+    const resp = batch.responsible || "未分配";
+    if (!byResponsibleMap.has(resp)) {
+      byResponsibleMap.set(resp, {
+        responsible: resp,
+        batchCount: 0,
+        damageCount: 0,
+        overdueCount: 0,
+        openBatchCount: 0,
+        completedBatchCount: 0
+      });
+    }
+    const entry = byResponsibleMap.get(resp);
+    entry.batchCount += 1;
+    const batchDamageCount = batch.damageIds.length;
+    entry.damageCount += batchDamageCount;
+    if (batch.status === "open") entry.openBatchCount += 1;
+    if (batch.status === "completed") entry.completedBatchCount += 1;
+    if (batch.status === "open" && batch.plannedEndAt && new Date(batch.plannedEndAt) < now) {
+      entry.overdueCount += 1;
+    }
   });
+
+  const byResponsible = Array.from(byResponsibleMap.values()).sort((a, b) => b.batchCount - a.batchCount);
 
   return {
     statusCounts,
     byType,
     totalTypes: byType.length,
-    activeBatches: activeBatches.filter((b) => b.status === "open").length,
-    completedBatches: activeBatches.filter((b) => b.status === "completed").length
+    activeBatches: filteredBatches.filter((b) => b.status === "open").length,
+    completedBatches: filteredBatches.filter((b) => b.status === "completed").length,
+    byResponsible
   };
 }
 
@@ -1211,7 +1244,23 @@ async function handle(req, res) {
   }
 
   if (req.method === "GET" && pathname === "/batches") {
-    return send(res, 200, { data: db.batches.map((batch) => enrichBatch(db, batch)) });
+    const statusFilter = url.searchParams.get("status");
+    const responsibleFilter = url.searchParams.get("responsible");
+    const data = db.batches
+      .filter((batch) => {
+        if (statusFilter && batch.status !== statusFilter) return false;
+        if (responsibleFilter !== null && responsibleFilter !== undefined) {
+          const batchResp = batch.responsible || null;
+          if (responsibleFilter === "") {
+            if (batchResp !== null) return false;
+          } else {
+            if (batchResp !== responsibleFilter) return false;
+          }
+        }
+        return true;
+      })
+      .map((batch) => enrichBatch(db, batch));
+    return send(res, 200, { data, total: data.length });
   }
 
   if (req.method === "POST" && pathname === "/batches") {
@@ -1483,7 +1532,8 @@ async function handle(req, res) {
     const type = url.searchParams.get("type");
     const rubbingId = url.searchParams.get("rubbingId");
     const batchId = url.searchParams.get("batchId");
-    const data = computeRepairWorkbenchDashboard(db, { type, rubbingId, batchId });
+    const responsible = url.searchParams.get("responsible");
+    const data = computeRepairWorkbenchDashboard(db, { type, rubbingId, batchId, responsible });
     return send(res, 200, { data });
   }
 
@@ -1644,6 +1694,7 @@ async function handle(req, res) {
     const startDate = url.searchParams.get("startDate");
     const endDate = url.searchParams.get("endDate");
     const statusFilter = url.searchParams.get("status");
+    const responsibleFilter = url.searchParams.get("responsible");
 
     if (!startDate || !endDate) {
       return send(res, 400, { error: "缺少参数：startDate 和 endDate 都是必需的" });
@@ -1657,6 +1708,15 @@ async function handle(req, res) {
 
     const schedules = db.batches.filter((batch) => {
       if (statusFilter && batch.status !== statusFilter) return false;
+
+      if (responsibleFilter !== null && responsibleFilter !== undefined) {
+        const batchResp = batch.responsible || null;
+        if (responsibleFilter === "") {
+          if (batchResp !== null) return false;
+        } else {
+          if (batchResp !== responsibleFilter) return false;
+        }
+      }
 
       const batchStart = batch.plannedStartAt ? new Date(batch.plannedStartAt) : null;
       const batchEnd = batch.plannedEndAt ? new Date(batch.plannedEndAt) : null;
