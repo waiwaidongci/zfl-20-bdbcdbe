@@ -7,6 +7,7 @@ const testHelper = require("./test-helper");
 const BACKUP_FILE = path.join(__dirname, "data", "db.json.rollbacktest");
 const AUDIT_LOG_FILE = path.join(__dirname, "data", "audit-logs.json");
 const AUDIT_LOG_BACKUP_FILE = path.join(__dirname, "data", "audit-logs.json.rollbacktest");
+const DB_FILE = testHelper.DB_FILE;
 const PORT = 3061;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 

@@ -106,10 +106,23 @@ const routes = [
 
 async function ensureDb() {
   await mkdir(path.dirname(DB_FILE), { recursive: true });
+  let content;
   try {
-    JSON.parse(await readFile(DB_FILE, "utf8"));
-  } catch {
+    content = await readFile(DB_FILE, "utf8");
+  } catch (readError) {
+    if (readError.code !== "ENOENT") {
+      throw readError;
+    }
     await writeFile(DB_FILE, JSON.stringify(initialData, null, 2));
+    return;
+  }
+  try {
+    JSON.parse(content);
+  } catch (parseError) {
+    const error = new Error(`数据库JSON损坏，拒绝自动覆盖: ${parseError.message}`);
+    error.code = "JSON_CORRUPTED";
+    error.status = 500;
+    throw error;
   }
 }
 
@@ -147,8 +160,14 @@ async function writeDb(data) {
   let raw;
   try {
     raw = JSON.parse(await readFile(DB_FILE, "utf8"));
-  } catch {
-    raw = null;
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      raw = null;
+    } else {
+      const writeError = new Error(`写入被阻断：当前数据库JSON损坏 - ${error.message}`);
+      writeError.code = "JSON_CORRUPTED";
+      throw writeError;
+    }
   }
 
   let toWrite;
@@ -1790,6 +1809,11 @@ const server = http.createServer((req, res) => {
         console.error(`[数据迁移] 错误: 数据库 JSON 损坏，拒绝启动`);
         startupMode = "fatal";
         startupWarning = "数据库文件 JSON 损坏";
+        break;
+      case "READ_FAILED":
+        console.error(`[数据迁移] 错误: 数据库读取失败，拒绝启动`);
+        startupMode = "fatal";
+        startupWarning = "数据库文件读取失败";
         break;
       case "BACKUP_CREATION_FAILED":
         console.error(`[数据迁移] 警告: 备份创建失败，迁移已中止，将以原结构启动`);
