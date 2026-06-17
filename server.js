@@ -616,11 +616,19 @@ function enrichBatch(db, batch) {
 
 function computeRepairWorkbenchDashboard(db, filters = {}) {
   const { type, rubbingId, batchId, responsible } = filters;
+  const hasResponsibleFilter = responsible !== undefined && responsible !== null;
 
   const filteredBatches = db.batches.filter((b) => {
     if (batchId) return b.id === batchId;
     if (rubbingId) return b.damageIds.some((did) => db.damages.find((d) => d.id === did && d.rubbingId === rubbingId));
-    if (responsible) return (b.responsible || null) === responsible;
+    if (hasResponsibleFilter) {
+      const batchResp = b.responsible || null;
+      if (responsible === "") {
+        return batchResp === null;
+      } else {
+        return batchResp === responsible;
+      }
+    }
     return true;
   });
 
@@ -630,8 +638,8 @@ function computeRepairWorkbenchDashboard(db, filters = {}) {
     if (type && damage.type !== type) return false;
     if (rubbingId && damage.rubbingId !== rubbingId) return false;
     if (batchId && damage.batchId !== batchId) return false;
-    if (responsible && damage.batchId) return filteredBatchIds.has(damage.batchId);
-    if (responsible && !damage.batchId) return false;
+    if (hasResponsibleFilter && damage.batchId) return filteredBatchIds.has(damage.batchId);
+    if (hasResponsibleFilter && !damage.batchId) return false;
     return true;
   });
 

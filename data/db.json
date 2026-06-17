@@ -1,13 +1,13 @@
 {
   "schemaVersion": 2,
   "meta": {
-    "createdAt": "2026-06-17T07:35:45.208Z",
-    "lastModifiedAt": "2026-06-17T07:36:49.767Z",
+    "createdAt": "2026-06-17T08:04:39.015Z",
+    "lastModifiedAt": "2026-06-17T08:04:39.015Z",
     "migrationHistory": [],
     "dataStatistics": {
       "rubbings": 1,
-      "damages": 0,
-      "batches": 0,
+      "damages": 5,
+      "batches": 3,
       "repairImages": 0,
       "batchSnapshots": 0
     }
@@ -15,16 +15,145 @@
   "entities": {
     "rubbings": [
       {
-        "id": "rubbing_mqhrciue_wb9mb8",
+        "id": "rubbing_demo",
         "code": "TP-清-014",
         "source": "地方碑刻残页",
         "paperSize": "42x68cm",
-        "note": "",
-        "createdAt": "2026-06-17T07:36:49.766Z"
+        "note": "边缘有旧折痕",
+        "createdAt": "2026-06-17T08:04:39.014Z"
       }
     ],
-    "damages": [],
-    "batches": [],
+    "damages": [
+      {
+        "id": "damage_demo_1",
+        "rubbingId": "rubbing_demo",
+        "position": "左上角第3列题字旁",
+        "type": "虫蛀孔",
+        "beforePhotoUrl": "https://example.local/before-014-1.jpg",
+        "afterPhotoUrl": "",
+        "status": "in_repair",
+        "repairNote": "",
+        "batchId": "batch_zhanggong",
+        "reviewStatus": "approved",
+        "rejectReason": "",
+        "reviewedBy": "系统初始化",
+        "reviewedAt": "2026-06-17T08:04:39.014Z",
+        "createdAt": "2026-06-17T08:04:39.014Z",
+        "repairedAt": null
+      },
+      {
+        "id": "damage_demo_2",
+        "rubbingId": "rubbing_demo",
+        "position": "下边缘中央",
+        "type": "撕裂",
+        "beforePhotoUrl": "https://example.local/before-014-2.jpg",
+        "afterPhotoUrl": "",
+        "status": "in_repair",
+        "repairNote": "",
+        "batchId": "batch_zhanggong",
+        "reviewStatus": "approved",
+        "rejectReason": "",
+        "reviewedBy": "系统初始化",
+        "reviewedAt": "2026-06-17T08:04:39.014Z",
+        "createdAt": "2026-06-17T08:04:39.014Z",
+        "repairedAt": null
+      },
+      {
+        "id": "damage_demo_3",
+        "rubbingId": "rubbing_demo",
+        "position": "右边缘中部",
+        "type": "霉斑",
+        "beforePhotoUrl": "https://example.local/before-014-3.jpg",
+        "afterPhotoUrl": "",
+        "status": "in_repair",
+        "repairNote": "",
+        "batchId": "batch_ligong",
+        "reviewStatus": "approved",
+        "rejectReason": "",
+        "reviewedBy": "系统初始化",
+        "reviewedAt": "2026-06-17T08:04:39.014Z",
+        "createdAt": "2026-06-17T08:04:39.014Z",
+        "repairedAt": null
+      },
+      {
+        "id": "damage_demo_4",
+        "rubbingId": "rubbing_demo",
+        "position": "右上角题额",
+        "type": "水渍",
+        "beforePhotoUrl": "https://example.local/before-014-4.jpg",
+        "afterPhotoUrl": "",
+        "status": "pending",
+        "repairNote": "",
+        "batchId": null,
+        "reviewStatus": "review_pending",
+        "rejectReason": "",
+        "reviewedBy": null,
+        "reviewedAt": null,
+        "createdAt": "2026-06-17T08:04:39.014Z",
+        "repairedAt": null
+      },
+      {
+        "id": "damage_demo_5",
+        "rubbingId": "rubbing_demo",
+        "position": "左下角落款处",
+        "type": "虫蛀孔",
+        "beforePhotoUrl": "https://example.local/before-014-5.jpg",
+        "afterPhotoUrl": "",
+        "status": "in_repair",
+        "repairNote": "",
+        "batchId": "batch_old_unassigned",
+        "reviewStatus": "approved",
+        "rejectReason": "",
+        "reviewedBy": "系统初始化",
+        "reviewedAt": "2026-06-17T08:04:39.014Z",
+        "createdAt": "2026-06-17T08:04:39.014Z",
+        "repairedAt": null
+      }
+    ],
+    "batches": [
+      {
+        "id": "batch_zhanggong",
+        "name": "张工-六月上旬重点修补",
+        "status": "open",
+        "damageIds": [
+          "damage_demo_1",
+          "damage_demo_2"
+        ],
+        "note": "包含两处重要虫蛀缺损，需要仔细处理",
+        "plannedStartAt": "2026-06-12T08:04:39.014Z",
+        "plannedEndAt": "2026-06-22T08:04:39.014Z",
+        "responsible": "张工",
+        "createdAt": "2026-06-07T08:04:39.014Z",
+        "completedAt": null
+      },
+      {
+        "id": "batch_ligong",
+        "name": "李工-霉斑专项处理",
+        "status": "open",
+        "damageIds": [
+          "damage_demo_3"
+        ],
+        "note": "霉斑清理需要配合干燥处理",
+        "plannedStartAt": "2026-06-27T08:04:39.014Z",
+        "plannedEndAt": "2026-07-07T08:04:39.014Z",
+        "responsible": "李工",
+        "createdAt": "2026-06-12T08:04:39.014Z",
+        "completedAt": null
+      },
+      {
+        "id": "batch_old_unassigned",
+        "name": "历史遗留批次（无负责人）",
+        "status": "open",
+        "damageIds": [
+          "damage_demo_5"
+        ],
+        "note": "系统升级前创建的旧批次，未指定负责人",
+        "plannedStartAt": "2026-06-12T08:04:39.014Z",
+        "plannedEndAt": "2026-06-27T08:04:39.014Z",
+        "createdAt": "2026-06-07T08:04:39.014Z",
+        "completedAt": null
+      }
+    ],
     "repairImages": [],
     "batchSnapshots": []
   },
