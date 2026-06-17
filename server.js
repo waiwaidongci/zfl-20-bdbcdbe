@@ -556,16 +556,62 @@ function normalizeDamage(damage) {
   };
 }
 
+function normalizeRepairImage(img) {
+  return {
+    ...img,
+    isPrimary: img.isPrimary === true
+  };
+}
+
 const VALID_STAGES = ["before_repair", "during_repair", "after_repair"];
 
 function groupImagesByStage(images) {
   const grouped = { before_repair: [], during_repair: [], after_repair: [] };
   images.forEach((img) => {
     if (grouped[img.stage]) {
-      grouped[img.stage].push(img);
+      grouped[img.stage].push(normalizeRepairImage(img));
     }
   });
   return grouped;
+}
+
+function validatePrimaryImageConstraints(db, damageId, stage, isPrimary, excludeImageId = null) {
+  if (!isPrimary) return [];
+  const errors = [];
+  const existingPrimary = db.repairImages.find(
+    (img) =>
+      img.damageId === damageId &&
+      img.stage === stage &&
+      img.isPrimary === true &&
+      img.id !== excludeImageId
+  );
+  if (existingPrimary) {
+    errors.push(`缺损项 ${damageId} 的 ${stage} 阶段已存在主图（${existingPrimary.id}），同一阶段只能有一张主图`);
+  }
+  return errors;
+}
+
+function validateBatchPrimaryImageConstraints(db, images) {
+  const errors = [];
+  const primaryKeyMap = new Map();
+
+  images.forEach((img, idx) => {
+    if (!img.isPrimary) return;
+    const key = `${img.damageId}_${img.stage}`;
+    if (primaryKeyMap.has(key)) {
+      const existingIdx = primaryKeyMap.get(key);
+      errors.push(`第${existingIdx + 1}张和第${idx + 1}张影像都标记为 ${img.damageId} ${img.stage} 阶段的主图，同一阶段只能有一张主图`);
+    } else {
+      primaryKeyMap.set(key, idx);
+    }
+
+    const dbErrors = validatePrimaryImageConstraints(db, img.damageId, img.stage, true);
+    if (dbErrors.length) {
+      errors.push(...dbErrors.map((e) => `第${idx + 1}张影像：${e}`));
+    }
+  });
+
+  return errors;
 }
 
 function isValidImageUrl(value) {
@@ -587,6 +633,9 @@ function validateImageEntry(entry, index) {
   } else if (!isValidImageUrl(entry.url.trim())) {
     errors.push(`第${index + 1}张图片URL格式无效，必须是有效的 http 或 https 链接`);
   }
+  if (entry.isPrimary !== undefined && entry.isPrimary !== null && typeof entry.isPrimary !== "boolean") {
+    errors.push(`第${index + 1}张图片 isPrimary 必须是布尔值`);
+  }
   return errors;
 }
 
@@ -601,7 +650,11 @@ function findRubbing(db, rubbingId) {
 }
 
 function enrichBatch(db, batch) {
-  const damages = db.damages.filter((item) => batch.damageIds.includes(item.id)).map(normalizeDamage);
+  const damages = db.damages.filter((item) => batch.damageIds.includes(item.id)).map((damage) => {
+  const normalized = normalizeDamage(damage);
+  const images = db.repairImages.filter((img) => img.damageId === damage.id);
+  return { ...normalized, images: groupImagesByStage(images) };
+});
   return {
     ...batch,
     plannedStartAt: batch.plannedStartAt || null,
@@ -931,11 +984,12 @@ function exportRepairResultsCsv(db, filters = {}) {
   const batchMap = new Map(db.batches.map((b) => [b.id, b]));
   const imagesMap = new Map();
   db.repairImages.forEach((img) => {
+    const normalizedImg = normalizeRepairImage(img);
     if (!imagesMap.has(img.damageId)) {
       imagesMap.set(img.damageId, { before_repair: [], during_repair: [], after_repair: [] });
     }
     if (imagesMap.get(img.damageId)[img.stage]) {
-      imagesMap.get(img.damageId)[img.stage].push(img);
+      imagesMap.get(img.damageId)[img.stage].push(normalizedImg);
     }
   });
 
@@ -954,6 +1008,9 @@ function exportRepairResultsCsv(db, filters = {}) {
     { key: "beforeImageCount", label: "修补前影像数" },
     { key: "duringImageCount", label: "修补中影像数" },
     { key: "afterImageCount", label: "修补后影像数" },
+    { key: "primaryBeforeImageUrl", label: "修补前主图URL" },
+    { key: "primaryDuringImageUrl", label: "修补中主图URL" },
+    { key: "primaryAfterImageUrl", label: "修补后主图URL" },
     { key: "beforePhotoUrl", label: "修补前照片" },
     { key: "afterPhotoUrl", label: "修补后照片" },
     { key: "createdAt", label: "创建时间" },
@@ -964,6 +1021,9 @@ function exportRepairResultsCsv(db, filters = {}) {
     const rubbing = rubbingMap.get(damage.rubbingId) || {};
     const batch = damage.batchId ? batchMap.get(damage.batchId) : null;
     const images = imagesMap.get(damage.id) || { before_repair: [], during_repair: [], after_repair: [] };
+    const primaryBefore = images.before_repair.find((img) => img.isPrimary) || images.before_repair[0];
+    const primaryDuring = images.during_repair.find((img) => img.isPrimary) || images.during_repair[0];
+    const primaryAfter = images.after_repair.find((img) => img.isPrimary) || images.after_repair[0];
     return {
       id: damage.id,
       rubbingCode: rubbing.code || "",
@@ -979,6 +1039,9 @@ function exportRepairResultsCsv(db, filters = {}) {
       beforeImageCount: images.before_repair.length,
       duringImageCount: images.during_repair.length,
       afterImageCount: images.after_repair.length,
+      primaryBeforeImageUrl: primaryBefore ? primaryBefore.url : "",
+      primaryDuringImageUrl: primaryDuring ? primaryDuring.url : "",
+      primaryAfterImageUrl: primaryAfter ? primaryAfter.url : "",
       beforePhotoUrl: damage.beforePhotoUrl || "",
       afterPhotoUrl: damage.afterPhotoUrl || "",
       createdAt: damage.createdAt,
@@ -1230,6 +1293,12 @@ async function handle(req, res) {
         return send(res, 400, { error: allErrors.join("; ") });
       }
 
+      const batchImagesWithDamageId = imagesInput.map((img) => ({ ...img, damageId }));
+      const primaryErrors = validateBatchPrimaryImageConstraints(db, batchImagesWithDamageId);
+      if (primaryErrors.length) {
+        return send(res, 400, { error: primaryErrors.join("; ") });
+      }
+
       const created = [];
       imagesInput.forEach((entry) => {
         const record = {
@@ -1240,10 +1309,11 @@ async function handle(req, res) {
           capturedAt: entry.capturedAt || new Date().toISOString(),
           description: entry.description || "",
           collector: entry.collector || "",
+          isPrimary: entry.isPrimary === true,
           createdAt: new Date().toISOString()
         };
         db.repairImages.push(record);
-        created.push(record);
+        created.push(normalizeRepairImage(record));
       });
 
       await writeDb(db);
@@ -1373,6 +1443,11 @@ async function handle(req, res) {
       if (stageUrlErrors.length) {
         return send(res, 400, { error: stageUrlErrors.join("; ") });
       }
+
+      const primaryErrors = validateBatchPrimaryImageConstraints(db, archiveImages);
+      if (primaryErrors.length) {
+        return send(res, 400, { error: `影像主图约束校验失败：${primaryErrors.join("; ")}` });
+      }
     }
 
     const batchDamageSnapshots = {};
@@ -1392,6 +1467,7 @@ async function handle(req, res) {
           capturedAt: entry.capturedAt || new Date().toISOString(),
           description: entry.description || "",
           collector: entry.collector || "",
+          isPrimary: entry.isPrimary === true,
           createdAt: new Date().toISOString()
         };
         addedImageIds.push(record.id);

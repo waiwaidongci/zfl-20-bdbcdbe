@@ -298,10 +298,13 @@ async function runTests() {
   assertEqual(resultsRes.status, 200, "修补结果导出返回 200");
 
   const resultsParsed = parseCsv(resultsRes.body);
-  assertEqual(resultsParsed.headers.length, 18, "修补结果CSV有18列");
+  assertEqual(resultsParsed.headers.length, 21, "修补结果CSV有21列");
   assert(resultsParsed.headers.includes("修补前影像数"), "包含修补前影像数列");
   assert(resultsParsed.headers.includes("修补中影像数"), "包含修补中影像数列");
   assert(resultsParsed.headers.includes("修补后影像数"), "包含修补后影像数列");
+  assert(resultsParsed.headers.includes("修补前主图URL"), "包含修补前主图URL列");
+  assert(resultsParsed.headers.includes("修补中主图URL"), "包含修补中主图URL列");
+  assert(resultsParsed.headers.includes("修补后主图URL"), "包含修补后主图URL列");
 
   const d3Row = resultsParsed.rows.find((row) => row.includes("d3"));
   const d3BeforeIdx = resultsParsed.headers.indexOf("修补前影像数");
@@ -376,7 +379,7 @@ async function runTests() {
 
   const emptyResultsRes = await httpRequestCsv("GET", "/export/repair-results");
   const emptyResultsParsed = parseCsv(emptyResultsRes.body);
-  assertEqual(emptyResultsParsed.headers.length, 18, "空修补结果仍有18列表头");
+  assertEqual(emptyResultsParsed.headers.length, 21, "空修补结果仍有21列表头");
 
   await stopServer();
 

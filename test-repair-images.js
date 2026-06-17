@@ -72,7 +72,7 @@ function stopServer() {
   });
 }
 
-function httpRequest(method, pathname, body) {
+function httpRequest(method, pathname, body, expectText = false) {
   return new Promise((resolve, reject) => {
     const url = `${BASE_URL}${pathname}`;
     const options = {
@@ -83,10 +83,14 @@ function httpRequest(method, pathname, body) {
       let data = "";
       res.on("data", (chunk) => (data += chunk));
       res.on("end", () => {
-        try {
-          resolve({ status: res.statusCode, body: JSON.parse(data) });
-        } catch (e) {
-          reject(e);
+        if (expectText) {
+          resolve({ status: res.statusCode, body: data });
+        } else {
+          try {
+            resolve({ status: res.statusCode, body: JSON.parse(data) });
+          } catch (e) {
+            resolve({ status: res.statusCode, body: data });
+          }
         }
       });
     });
@@ -422,6 +426,299 @@ async function runTests() {
   const emptyArrRes = await httpRequest("POST", "/damages/d1/images", { images: [] });
   assertEqual(emptyArrRes.status, 400, "空数组返回 400");
   assert(emptyArrRes.body.error.includes("不能为空数组"), "错误信息提示不能为空数组");
+
+  await stopServer();
+
+  console.log("\n【场景16】isPrimary 默认为 false，未传值时正确返回");
+  seedDb();
+  await startServer();
+
+  const defaultPrimaryRes = await httpRequest("POST", "/damages/d1/images", {
+    stage: "before_repair",
+    url: "https://example.local/default-primary.jpg"
+  });
+  assertEqual(defaultPrimaryRes.status, 201, "登记影像返回 201");
+  const defaultImg = defaultPrimaryRes.body.data[0];
+  assertEqual(defaultImg.isPrimary, false, "未传 isPrimary 时默认为 false");
+
+  await stopServer();
+
+  console.log("\n【场景17】设置 isPrimary: true 成功，且正确返回");
+  seedDb();
+  await startServer();
+
+  const primaryTrueRes = await httpRequest("POST", "/damages/d1/images", {
+    stage: "before_repair",
+    url: "https://example.local/primary-true.jpg",
+    isPrimary: true
+  });
+  assertEqual(primaryTrueRes.status, 201, "设置主图返回 201");
+  const primaryImg = primaryTrueRes.body.data[0];
+  assertEqual(primaryImg.isPrimary, true, "isPrimary 为 true");
+
+  const getPrimaryImagesRes = await httpRequest("GET", "/damages/d1/images");
+  const beforeImages = getPrimaryImagesRes.body.data.before_repair;
+  assertEqual(beforeImages.length, 1, "修补前影像 1 张");
+  assertEqual(beforeImages[0].isPrimary, true, "查询接口返回 isPrimary 为 true");
+
+  await stopServer();
+
+  console.log("\n【场景18】同一缺损同一阶段已存在主图，新增主图时报错");
+  seedDb();
+  writeDb({
+    rubbings: [
+      { id: "r1", code: "TP-清-014", source: "地方碑刻残页", paperSize: "42x68cm", note: "", createdAt: "2026-01-01T00:00:00.000Z" }
+    ],
+    damages: [
+      { id: "d1", rubbingId: "r1", position: "左上角", type: "虫蛀孔", beforePhotoUrl: "x.jpg", afterPhotoUrl: "", status: "in_repair", repairNote: "", batchId: "b1", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: null, reviewStatus: "approved", rejectReason: "" }
+    ],
+    batches: [],
+    repairImages: [
+      { id: "img_existing", damageId: "d1", stage: "before_repair", url: "https://example.local/existing-primary.jpg", isPrimary: true, capturedAt: "2026-06-10T09:00:00.000Z", description: "已存在主图", collector: "张师傅", createdAt: "2026-06-10T09:00:00.000Z" }
+    ]
+  });
+  await startServer();
+
+  const conflictRes = await httpRequest("POST", "/damages/d1/images", {
+    stage: "before_repair",
+    url: "https://example.local/new-primary.jpg",
+    isPrimary: true
+  });
+  assertEqual(conflictRes.status, 400, "主图冲突返回 400");
+  assert(conflictRes.body.error.includes("同一阶段只能有一张主图"), "错误信息包含主图约束提示");
+  assert(conflictRes.body.error.includes("img_existing"), "错误信息指出已存在的主图ID");
+
+  await stopServer();
+
+  console.log("\n【场景19】批量登记时，同批次内同一缺损同一阶段多张主图报错");
+  seedDb();
+  await startServer();
+
+  const batchConflictRes = await httpRequest("POST", "/damages/d1/images", {
+    images: [
+      { stage: "before_repair", url: "https://example.local/batch-primary-1.jpg", isPrimary: true },
+      { stage: "before_repair", url: "https://example.local/batch-primary-2.jpg", isPrimary: true }
+    ]
+  });
+  assertEqual(batchConflictRes.status, 400, "批次内主图冲突返回 400");
+  assert(batchConflictRes.body.error.includes("同一阶段只能有一张主图"), "错误信息包含主图约束提示");
+  assert(batchConflictRes.body.error.includes("第1张和第2张"), "错误信息指出冲突的图片序号");
+
+  await stopServer();
+
+  console.log("\n【场景20】isPrimary 非布尔值时报错");
+  seedDb();
+  await startServer();
+
+  const invalidTypeRes = await httpRequest("POST", "/damages/d1/images", {
+    stage: "before_repair",
+    url: "https://example.local/invalid-type.jpg",
+    isPrimary: "yes"
+  });
+  assertEqual(invalidTypeRes.status, 400, "isPrimary 类型错误返回 400");
+  assert(invalidTypeRes.body.error.includes("isPrimary 必须是布尔值"), "错误信息包含类型校验提示");
+
+  await stopServer();
+
+  console.log("\n【场景21】PATCH缺损项返回的影像包含 isPrimary 信息");
+  seedDb();
+  writeDb({
+    rubbings: [
+      { id: "r1", code: "TP-清-014", source: "地方碑刻残页", paperSize: "42x68cm", note: "", createdAt: "2026-01-01T00:00:00.000Z" }
+    ],
+    damages: [
+      { id: "d1", rubbingId: "r1", position: "左上角", type: "虫蛀孔", beforePhotoUrl: "x.jpg", afterPhotoUrl: "", status: "in_repair", repairNote: "", batchId: "b1", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: null, reviewStatus: "approved", rejectReason: "" }
+    ],
+    batches: [],
+    repairImages: [
+      { id: "img_patch", damageId: "d1", stage: "before_repair", url: "https://example.local/patch-primary.jpg", isPrimary: true, capturedAt: "2026-06-10T09:00:00.000Z", description: "", collector: "", createdAt: "2026-06-10T09:00:00.000Z" }
+    ]
+  });
+  await startServer();
+
+  const patchImagesRes = await httpRequest("PATCH", "/damages/d1", { status: "pending" });
+  assertEqual(patchImagesRes.status, 200, "PATCH返回 200");
+  const patchImages = patchImagesRes.body.data.images;
+  assert(patchImages.before_repair.length > 0, "PATCH返回影像数据");
+  assertEqual(patchImages.before_repair[0].isPrimary, true, "PATCH返回的影像包含 isPrimary");
+
+  await stopServer();
+
+  console.log("\n【场景22】批次详情返回的缺损影像包含 isPrimary 信息");
+  seedDb();
+  writeDb({
+    rubbings: [
+      { id: "r1", code: "TP-清-014", source: "地方碑刻残页", paperSize: "42x68cm", note: "", createdAt: "2026-01-01T00:00:00.000Z" }
+    ],
+    damages: [
+      { id: "d1", rubbingId: "r1", position: "左上角", type: "虫蛀孔", beforePhotoUrl: "x.jpg", afterPhotoUrl: "", status: "in_repair", repairNote: "", batchId: "b1", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: null, reviewStatus: "approved", rejectReason: "" }
+    ],
+    batches: [
+      { id: "b1", name: "六月修补批次", status: "open", damageIds: ["d1"], note: "", createdAt: "2026-06-01T00:00:00.000Z", completedAt: null, plannedStartAt: null, plannedEndAt: null, responsible: null }
+    ],
+    repairImages: [
+      { id: "img_batch", damageId: "d1", stage: "after_repair", url: "https://example.local/batch-detail-primary.jpg", isPrimary: true, capturedAt: "2026-06-10T09:00:00.000Z", description: "", collector: "", createdAt: "2026-06-10T09:00:00.000Z" }
+    ]
+  });
+  await startServer();
+
+  const batchDetailRes = await httpRequest("GET", "/batches/b1");
+  assertEqual(batchDetailRes.status, 200, "批次详情返回 200");
+  const batchDamage = batchDetailRes.body.data.damages[0];
+  assert(batchDamage.images.after_repair.length > 0, "批次详情中缺损包含影像");
+  assertEqual(batchDamage.images.after_repair[0].isPrimary, true, "批次详情返回的影像包含 isPrimary");
+
+  await stopServer();
+
+  console.log("\n【场景23】完成批次时，archiveImages 主图冲突校验");
+  seedDb();
+  writeDb({
+    rubbings: [
+      { id: "r1", code: "TP-清-014", source: "地方碑刻残页", paperSize: "42x68cm", note: "", createdAt: "2026-01-01T00:00:00.000Z" }
+    ],
+    damages: [
+      { id: "d1", rubbingId: "r1", position: "左上角", type: "虫蛀孔", beforePhotoUrl: "x.jpg", afterPhotoUrl: "", status: "in_repair", repairNote: "", batchId: "b1", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: null, reviewStatus: "approved", rejectReason: "" },
+      { id: "d2", rubbingId: "r1", position: "下边缘", type: "撕裂", beforePhotoUrl: "x.jpg", afterPhotoUrl: "", status: "in_repair", repairNote: "", batchId: "b1", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: null, reviewStatus: "approved", rejectReason: "" }
+    ],
+    batches: [
+      { id: "b1", name: "六月修补批次", status: "open", damageIds: ["d1", "d2"], note: "", createdAt: "2026-06-01T00:00:00.000Z", completedAt: null, plannedStartAt: null, plannedEndAt: null, responsible: null }
+    ],
+    repairImages: []
+  });
+  await startServer();
+
+  const completePrimaryConflictRes = await httpRequest("POST", "/batches/b1/complete", {
+    note: "完成",
+    results: [
+      { damageId: "d1", afterPhotoUrl: "https://example.local/after-d1.jpg" },
+      { damageId: "d2", afterPhotoUrl: "https://example.local/after-d2.jpg" }
+    ],
+    archiveImages: [
+      { damageId: "d1", stage: "before_repair", url: "https://example.local/complete-b1.jpg", isPrimary: true },
+      { damageId: "d1", stage: "before_repair", url: "https://example.local/complete-b2.jpg", isPrimary: true }
+    ]
+  });
+  assertEqual(completePrimaryConflictRes.status, 400, "批次完成时主图冲突返回 400");
+  assert(completePrimaryConflictRes.body.error.includes("影像主图约束校验失败"), "错误信息包含主图校验失败提示");
+  assert(completePrimaryConflictRes.body.error.includes("同一阶段只能有一张主图"), "错误信息包含主图约束提示");
+
+  await stopServer();
+
+  console.log("\n【场景24】完成批次时，archiveImages 主图与数据库中已有主图冲突");
+  seedDb();
+  writeDb({
+    rubbings: [
+      { id: "r1", code: "TP-清-014", source: "地方碑刻残页", paperSize: "42x68cm", note: "", createdAt: "2026-01-01T00:00:00.000Z" }
+    ],
+    damages: [
+      { id: "d1", rubbingId: "r1", position: "左上角", type: "虫蛀孔", beforePhotoUrl: "x.jpg", afterPhotoUrl: "", status: "in_repair", repairNote: "", batchId: "b1", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: null, reviewStatus: "approved", rejectReason: "" }
+    ],
+    batches: [
+      { id: "b1", name: "六月修补批次", status: "open", damageIds: ["d1"], note: "", createdAt: "2026-06-01T00:00:00.000Z", completedAt: null, plannedStartAt: null, plannedEndAt: null, responsible: null }
+    ],
+    repairImages: [
+      { id: "img_exist_primary", damageId: "d1", stage: "before_repair", url: "https://example.local/exist-before-primary.jpg", isPrimary: true, capturedAt: "2026-06-10T09:00:00.000Z", description: "", collector: "", createdAt: "2026-06-10T09:00:00.000Z" }
+    ]
+  });
+  await startServer();
+
+  const completeDbConflictRes = await httpRequest("POST", "/batches/b1/complete", {
+    note: "完成",
+    results: [
+      { damageId: "d1", afterPhotoUrl: "https://example.local/after-d1.jpg" }
+    ],
+    archiveImages: [
+      { damageId: "d1", stage: "before_repair", url: "https://example.local/complete-conflict.jpg", isPrimary: true }
+    ]
+  });
+  assertEqual(completeDbConflictRes.status, 400, "批次完成时与已有主图冲突返回 400");
+  assert(completeDbConflictRes.body.error.includes("影像主图约束校验失败"), "错误信息包含主图校验失败提示");
+  assert(completeDbConflictRes.body.error.includes("img_exist_primary"), "错误信息指出已存在的主图ID");
+
+  await stopServer();
+
+  console.log("\n【场景25】完成批次时，archiveImages 正确写入 isPrimary 字段");
+  seedDb();
+  await startServer();
+
+  const completeWithPrimaryRes = await httpRequest("POST", "/batches/b1/complete", {
+    note: "完成",
+    results: [
+      { damageId: "d1", afterPhotoUrl: "https://example.local/after-d1.jpg" },
+      { damageId: "d2", afterPhotoUrl: "https://example.local/after-d2.jpg" }
+    ],
+    archiveImages: [
+      { damageId: "d1", stage: "before_repair", url: "https://example.local/archive-b1.jpg", isPrimary: true },
+      { damageId: "d1", stage: "before_repair", url: "https://example.local/archive-b2.jpg", isPrimary: false },
+      { damageId: "d1", stage: "after_repair", url: "https://example.local/archive-a1.jpg", isPrimary: true }
+    ]
+  });
+  assertEqual(completeWithPrimaryRes.status, 200, "批次完成返回 200");
+
+  const d1ImagesAfter = await httpRequest("GET", "/damages/d1/images");
+  const beforeImagesAfter = d1ImagesAfter.body.data.before_repair;
+  const afterImagesAfter = d1ImagesAfter.body.data.after_repair;
+  assertEqual(beforeImagesAfter.length, 2, "d1 修补前影像 2 张");
+  const beforePrimary = beforeImagesAfter.find((img) => img.isPrimary === true);
+  const beforeNonPrimary = beforeImagesAfter.find((img) => img.isPrimary === false);
+  assert(beforePrimary, "存在 isPrimary 为 true 的修补前影像");
+  assert(beforeNonPrimary, "存在 isPrimary 为 false 的修补前影像");
+  assertEqual(beforePrimary.url, "https://example.local/archive-b1.jpg", "主图URL正确");
+  assertEqual(afterImagesAfter[0].isPrimary, true, "修补后影像 isPrimary 为 true");
+
+  await stopServer();
+
+  console.log("\n【场景26】旧数据（无 isPrimary 字段）默认返回 false");
+  seedDb();
+  writeDb({
+    rubbings: [
+      { id: "r1", code: "TP-清-014", source: "地方碑刻残页", paperSize: "42x68cm", note: "", createdAt: "2026-01-01T00:00:00.000Z" }
+    ],
+    damages: [
+      { id: "d1", rubbingId: "r1", position: "左上角", type: "虫蛀孔", beforePhotoUrl: "x.jpg", afterPhotoUrl: "", status: "in_repair", repairNote: "", batchId: "b1", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: null, reviewStatus: "approved", rejectReason: "" }
+    ],
+    batches: [],
+    repairImages: [
+      { id: "img_old", damageId: "d1", stage: "before_repair", url: "https://example.local/old-data.jpg", capturedAt: "2026-06-10T09:00:00.000Z", description: "旧数据无isPrimary", collector: "张师傅", createdAt: "2026-06-10T09:00:00.000Z" }
+    ]
+  });
+  await startServer();
+
+  const oldDataRes = await httpRequest("GET", "/damages/d1/images");
+  const oldImg = oldDataRes.body.data.before_repair[0];
+  assertEqual(oldImg.isPrimary, false, "旧数据 isPrimary 默认为 false");
+
+  await stopServer();
+
+  console.log("\n【场景27】导出修补结果时包含主图URL");
+  seedDb();
+  writeDb({
+    rubbings: [
+      { id: "r1", code: "TP-清-014", source: "地方碑刻残页", paperSize: "42x68cm", note: "", createdAt: "2026-01-01T00:00:00.000Z" }
+    ],
+    damages: [
+      { id: "d1", rubbingId: "r1", position: "左上角", type: "虫蛀孔", beforePhotoUrl: "x.jpg", afterPhotoUrl: "https://example.local/after.jpg", status: "repaired", repairNote: "修补完成", batchId: "b1", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: "2026-06-15T00:00:00.000Z", reviewStatus: "approved", rejectReason: "" }
+    ],
+    batches: [
+      { id: "b1", name: "六月修补批次", status: "completed", damageIds: ["d1"], note: "", createdAt: "2026-06-01T00:00:00.000Z", completedAt: "2026-06-15T00:00:00.000Z", plannedStartAt: null, plannedEndAt: null, responsible: null }
+    ],
+    repairImages: [
+      { id: "img_export_b", damageId: "d1", stage: "before_repair", url: "https://example.local/export-before.jpg", isPrimary: true, capturedAt: "2026-06-10T09:00:00.000Z", description: "", collector: "", createdAt: "2026-06-10T09:00:00.000Z" },
+      { id: "img_export_d", damageId: "d1", stage: "during_repair", url: "https://example.local/export-during.jpg", isPrimary: true, capturedAt: "2026-06-11T09:00:00.000Z", description: "", collector: "", createdAt: "2026-06-11T09:00:00.000Z" },
+      { id: "img_export_a", damageId: "d1", stage: "after_repair", url: "https://example.local/export-after.jpg", isPrimary: true, capturedAt: "2026-06-12T09:00:00.000Z", description: "", collector: "", createdAt: "2026-06-12T09:00:00.000Z" }
+    ]
+  });
+  await startServer();
+
+  const exportRes = await httpRequest("GET", "/export/repair-results?status=repaired", null, true);
+  assertEqual(exportRes.status, 200, "导出返回 200");
+  const csvContent = exportRes.body;
+  assert(csvContent.includes("修补前主图URL"), "CSV包含修补前主图URL列");
+  assert(csvContent.includes("修补中主图URL"), "CSV包含修补中主图URL列");
+  assert(csvContent.includes("修补后主图URL"), "CSV包含修补后主图URL列");
+  assert(csvContent.includes("https://example.local/export-before.jpg"), "CSV包含修补前主图URL");
+  assert(csvContent.includes("https://example.local/export-during.jpg"), "CSV包含修补中主图URL");
+  assert(csvContent.includes("https://example.local/export-after.jpg"), "CSV包含修补后主图URL");
 
   await stopServer();
 
