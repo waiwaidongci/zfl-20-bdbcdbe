@@ -1,4 +1,5 @@
 const { spawn } = require("child_process");
+const fs = require("fs");
 const http = require("http");
 const net = require("net");
 const path = require("path");
@@ -6,12 +7,14 @@ const testHelper = require("./test-helper");
 
 const BACKUP_FILE = path.join(__dirname, "data", "db.json.auditbackup");
 const AUDIT_BACKUP_FILE = path.join(__dirname, "data", "audit-logs.json.auditbackup");
+const BACKUP_DIR = path.join(__dirname, "data", "backups");
 const CONFIGURED_PORT = process.env.TEST_AUDIT_PORT ? Number(process.env.TEST_AUDIT_PORT) : null;
 
 let server;
 let baseUrl;
 let passed = 0;
 let failed = 0;
+const createdBackupFiles = new Set();
 
 function backupDb() {
   testHelper.backupDb(BACKUP_FILE);
@@ -26,7 +29,6 @@ function writeDb(data) {
 }
 
 function backupAuditLog() {
-  const fs = require("fs");
   const auditFile = path.join(__dirname, "data", "audit-logs.json");
   if (fs.existsSync(auditFile)) {
     fs.copyFileSync(auditFile, AUDIT_BACKUP_FILE);
@@ -34,7 +36,6 @@ function backupAuditLog() {
 }
 
 function restoreAuditLog() {
-  const fs = require("fs");
   const auditFile = path.join(__dirname, "data", "audit-logs.json");
   if (fs.existsSync(AUDIT_BACKUP_FILE)) {
     fs.copyFileSync(AUDIT_BACKUP_FILE, auditFile);
@@ -42,6 +43,24 @@ function restoreAuditLog() {
       fs.unlinkSync(AUDIT_BACKUP_FILE);
     } catch (_) {}
   }
+}
+
+function trackCreatedBackup(filename) {
+  if (filename) {
+    createdBackupFiles.add(filename);
+  }
+}
+
+function cleanupCreatedBackups() {
+  for (const filename of createdBackupFiles) {
+    const backupPath = path.join(BACKUP_DIR, path.basename(filename));
+    try {
+      if (fs.existsSync(backupPath)) {
+        fs.unlinkSync(backupPath);
+      }
+    } catch (_) {}
+  }
+  createdBackupFiles.clear();
 }
 
 function findAvailablePort() {
@@ -304,6 +323,7 @@ async function runTests() {
   assertEqual(backupRes.status, 201, "创建备份返回 201");
   const backupFilename = backupRes.body.data.filename;
   assertNotNull(backupFilename, "备份文件名存在");
+  trackCreatedBackup(backupFilename);
 
   const restoreRes = await httpRequest("POST", `/backups/${encodeURIComponent(backupFilename)}/restore`);
   assertEqual(restoreRes.status, 200, "备份恢复返回 200");
@@ -317,6 +337,7 @@ async function runTests() {
   assert(auditAfterRestore.body.data[0].changeSummary.includes(backupFilename), "changeSummary 包含备份文件名");
   assertNotNull(auditAfterRestore.body.data[0].oldValues, "有 oldValues");
   assertNotNull(auditAfterRestore.body.data[0].newValues, "有 newValues");
+  cleanupCreatedBackups();
 
   await stopServer();
 
@@ -522,6 +543,7 @@ async function main() {
     await stopServer();
     restoreDb();
     restoreAuditLog();
+    cleanupCreatedBackups();
   }
 }
 
