@@ -5,6 +5,8 @@ const path = require("path");
 
 const DB_FILE = path.join(__dirname, "data", "db.json");
 const BACKUP_FILE = path.join(__dirname, "data", "db.json.rollbacktest");
+const AUDIT_LOG_FILE = path.join(__dirname, "data", "audit-logs.json");
+const AUDIT_LOG_BACKUP_FILE = path.join(__dirname, "data", "audit-logs.json.rollbacktest");
 const PORT = 3061;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
@@ -16,12 +18,19 @@ function backupDb() {
   if (fs.existsSync(DB_FILE)) {
     fs.copyFileSync(DB_FILE, BACKUP_FILE);
   }
+  if (fs.existsSync(AUDIT_LOG_FILE)) {
+    fs.copyFileSync(AUDIT_LOG_FILE, AUDIT_LOG_BACKUP_FILE);
+  }
 }
 
 function restoreDb() {
   if (fs.existsSync(BACKUP_FILE)) {
     fs.copyFileSync(BACKUP_FILE, DB_FILE);
     fs.unlinkSync(BACKUP_FILE);
+  }
+  if (fs.existsSync(AUDIT_LOG_BACKUP_FILE)) {
+    fs.copyFileSync(AUDIT_LOG_BACKUP_FILE, AUDIT_LOG_FILE);
+    fs.unlinkSync(AUDIT_LOG_BACKUP_FILE);
   }
 }
 
