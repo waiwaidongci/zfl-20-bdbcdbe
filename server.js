@@ -23,6 +23,12 @@ const BACKUP_ERRORS = {
   INVALID_STRUCTURE: "INVALID_STRUCTURE"
 };
 
+const VALID_REPAIR_STATUSES = ["pending", "in_repair", "repaired"];
+const VALID_REVIEW_STATUSES = ["review_pending", "approved", "rejected"];
+
+const precheckTokenStore = new Map();
+const PRECHECK_TOKEN_TTL = 5 * 60 * 1000;
+
 const initialData = {
   rubbings: [
     {
@@ -537,6 +543,45 @@ function makeId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function normalizeRepairStatus(status) {
+  return VALID_REPAIR_STATUSES.includes(status) ? status : "pending";
+}
+
+function normalizeReviewStatus(status) {
+  return VALID_REVIEW_STATUSES.includes(status) ? status : "review_pending";
+}
+
+function createPrecheckToken() {
+  const token = makeId("precheck");
+  const expiresAt = Date.now() + PRECHECK_TOKEN_TTL;
+  precheckTokenStore.set(token, expiresAt);
+  return token;
+}
+
+function validatePrecheckToken(token) {
+  if (!token) return false;
+  const expiresAt = precheckTokenStore.get(token);
+  if (!expiresAt) return false;
+  if (Date.now() > expiresAt) {
+    precheckTokenStore.delete(token);
+    return false;
+  }
+  return true;
+}
+
+function consumePrecheckToken(token) {
+  if (!validatePrecheckToken(token)) return false;
+  precheckTokenStore.delete(token);
+  return true;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, expiresAt] of precheckTokenStore) {
+    if (now > expiresAt) precheckTokenStore.delete(token);
+  }
+}, 60 * 1000);
+
 function required(body, fields) {
   const missing = fields.filter((field) => body[field] === undefined || body[field] === "");
   if (missing.length) {
@@ -549,7 +594,8 @@ function required(body, fields) {
 function normalizeDamage(damage) {
   return {
     ...damage,
-    reviewStatus: damage.reviewStatus || "approved",
+    status: normalizeRepairStatus(damage.status),
+    reviewStatus: normalizeReviewStatus(damage.reviewStatus),
     rejectReason: damage.rejectReason || "",
     reviewedBy: damage.reviewedBy || null,
     reviewedAt: damage.reviewedAt || null
@@ -1211,7 +1257,7 @@ async function handle(req, res) {
       type: body.type ?? damage.type,
       beforePhotoUrl: body.beforePhotoUrl ?? damage.beforePhotoUrl,
       afterPhotoUrl: body.afterPhotoUrl ?? damage.afterPhotoUrl,
-      status: body.status ?? damage.status,
+      status: body.status !== undefined ? normalizeRepairStatus(body.status) : damage.status,
       repairNote: body.repairNote ?? damage.repairNote
     });
     damage.repairedAt = damage.status === "repaired" ? new Date().toISOString() : damage.repairedAt;
@@ -1718,10 +1764,10 @@ async function handle(req, res) {
       } else {
         errors.push("缺少关联拓片标识 rubbingId");
       }
-      if (damage.reviewStatus && !["review_pending", "approved", "rejected"].includes(damage.reviewStatus)) {
+      if (damage.reviewStatus && !VALID_REVIEW_STATUSES.includes(damage.reviewStatus)) {
         warnings.push(`审核状态 "${damage.reviewStatus}" 不是标准值，将使用默认值 review_pending`);
       }
-      if (damage.status && !["pending", "in_progress", "completed"].includes(damage.status)) {
+      if (damage.status && !VALID_REPAIR_STATUSES.includes(damage.status)) {
         warnings.push(`修补状态 "${damage.status}" 不是标准值，将使用默认值 pending`);
       }
       if (errors.length === 0) {
@@ -1775,7 +1821,10 @@ async function handle(req, res) {
   if (req.method === "POST" && pathname === "/import/precheck") {
     const body = await parseBody(req);
     const result = validateImportSubmission(body, db);
+    const precheckToken = createPrecheckToken();
     return send(res, 200, {
+      precheckToken,
+      precheckTokenExpiresAt: Date.now() + PRECHECK_TOKEN_TTL,
       total: result.total,
       importable: result.importable,
       rubbings: result.rubbingResults,
@@ -1785,6 +1834,15 @@ async function handle(req, res) {
 
   if (req.method === "POST" && pathname === "/import/confirm") {
     const body = await parseBody(req);
+
+    const tokenValid = consumePrecheckToken(body.precheckToken);
+    if (!tokenValid) {
+      return send(res, 400, {
+        error: "导入确认失败：缺少或无效的预检令牌。请先调用 /import/precheck 进行预检，并在确认时返回有效的 precheckToken。",
+        code: "MISSING_OR_INVALID_PRECHECK_TOKEN"
+      });
+    }
+
     const result = validateImportSubmission(body, db);
     const onlyValid = body.onlyValid !== false;
 
@@ -1823,10 +1881,10 @@ async function handle(req, res) {
         type: damage.type,
         beforePhotoUrl: damage.beforePhotoUrl,
         afterPhotoUrl: damage.afterPhotoUrl || "",
-        status: damage.status || "pending",
+        status: normalizeRepairStatus(damage.status),
         repairNote: damage.repairNote || "",
         batchId: null,
-        reviewStatus: damage.reviewStatus || "review_pending",
+        reviewStatus: normalizeReviewStatus(damage.reviewStatus),
         rejectReason: damage.rejectReason || "",
         reviewedBy: damage.reviewedBy || null,
         reviewedAt: damage.reviewedAt || null,
@@ -1863,7 +1921,11 @@ async function handle(req, res) {
         rubbings: rubbingRowMapping,
         damages: damageRowMapping
       },
-      onlyValid
+      onlyValid,
+      normalized: {
+        status: VALID_REPAIR_STATUSES,
+        reviewStatus: VALID_REVIEW_STATUSES
+      }
     });
   }
 

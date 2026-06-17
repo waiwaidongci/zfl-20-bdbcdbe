@@ -1302,5 +1302,47 @@
       "plannedEndAt": "2026-06-15T00:00:00.000Z",
       "responsible": "张师傅"
     }
+  },
+  {
+    "id": "audit_mqhxekop_qdm78w",
+    "timestamp": "2026-06-17T10:26:23.161Z",
+    "actionType": "update_damage",
+    "targetType": "damage",
+    "targetId": "damage_mqhxekog_v4you9",
+    "changeSummary": "更新缺损：无字段变更",
+    "oldValues": {
+      "id": "damage_mqhxekog_v4you9",
+      "rubbingId": "rubbing_mqhxekog_di6pyd",
+      "position": "右边缘中部",
+      "type": "折裂",
+      "beforePhotoUrl": "https://example.local/before-287-1.jpg",
+      "afterPhotoUrl": "",
+      "status": "pending",
+      "repairNote": "",
+      "batchId": null,
+      "reviewStatus": "review_pending",
+      "rejectReason": "",
+      "reviewedBy": null,
+      "reviewedAt": null,
+      "createdAt": "2026-06-17T10:26:23.152Z",
+      "repairedAt": null
+    },
+    "newValues": {
+      "id": "damage_mqhxekog_v4you9",
+      "rubbingId": "rubbing_mqhxekog_di6pyd",
+      "position": "右边缘中部",
+      "type": "折裂",
+      "beforePhotoUrl": "https://example.local/before-287-1.jpg",
+      "afterPhotoUrl": "",
+      "status": "pending",
+      "repairNote": "",
+      "batchId": null,
+      "reviewStatus": "review_pending",
+      "rejectReason": "",
+      "reviewedBy": null,
+      "reviewedAt": null,
+      "createdAt": "2026-06-17T10:26:23.152Z",
+      "repairedAt": null
+    }
   }
 ]
