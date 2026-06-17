@@ -72,7 +72,11 @@ const routes = [
   "POST /import/confirm",
   "GET /dashboard/repair-workbench?type=&rubbingId=&batchId=",
   "GET /rubbings/:id/summary",
-  "GET /schedules?startDate=&endDate=&status="
+  "GET /schedules?startDate=&endDate=&status=",
+  "GET /export/rubbings?startDate=&endDate=",
+  "GET /export/damages?status=&type=&startDate=&endDate=",
+  "GET /export/batches?status=&startDate=&endDate=",
+  "GET /export/repair-results?status=&type=&startDate=&endDate="
 ];
 
 async function ensureDb() {
@@ -249,6 +253,281 @@ function parseScheduleRangeDate(value, isEndDate = false) {
     date.setUTCHours(23, 59, 59, 999);
   }
   return date;
+}
+
+function parseDateRange(value, isEndDate = false) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (isNaN(date.getTime())) return null;
+  if (isEndDate && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    date.setUTCHours(23, 59, 59, 999);
+  }
+  return date;
+}
+
+function escapeCsvValue(value) {
+  if (value === null || value === undefined) return "";
+  const str = String(value);
+  if (str.includes(",") || str.includes("\"") || str.includes("\n") || str.includes("\r")) {
+    return `"${str.replace(/"/g, "\"\"")}"`;
+  }
+  return str;
+}
+
+function generateCsv(headers, rows) {
+  const headerLine = headers.map((h) => escapeCsvValue(h.label)).join(",");
+  const bodyLines = rows.map((row) =>
+    headers.map((h) => {
+      const value = row[h.key] !== undefined ? row[h.key] : "";
+      return escapeCsvValue(value);
+    }).join(",")
+  );
+  return [headerLine, ...bodyLines].join("\r\n");
+}
+
+function filterByDateRange(items, startDate, endDate, dateField = "createdAt") {
+  return items.filter((item) => {
+    const itemDate = new Date(item[dateField]);
+    if (startDate && itemDate < startDate) return false;
+    if (endDate && itemDate > endDate) return false;
+    return true;
+  });
+}
+
+function getStatusText(status) {
+  const statusMap = {
+    pending: "待修补",
+    in_repair: "修补中",
+    repaired: "已修补",
+    open: "进行中",
+    completed: "已完成",
+    approved: "已通过",
+    rejected: "已驳回",
+    review_pending: "待审核"
+  };
+  return statusMap[status] || status || "";
+}
+
+function exportRubbingsCsv(db, filters = {}) {
+  const { startDate, endDate } = filters;
+  const start = parseDateRange(startDate);
+  const end = parseDateRange(endDate, true);
+
+  let rubbings = filterByDateRange(db.rubbings, start, end);
+
+  const headers = [
+    { key: "id", label: "拓片ID" },
+    { key: "code", label: "拓片编号" },
+    { key: "source", label: "来源" },
+    { key: "paperSize", label: "纸张尺寸" },
+    { key: "note", label: "备注" },
+    { key: "damageCount", label: "缺损总数" },
+    { key: "pendingCount", label: "待修补数" },
+    { key: "inRepairCount", label: "修补中数" },
+    { key: "repairedCount", label: "已修补数" },
+    { key: "createdAt", label: "创建时间" }
+  ];
+
+  const rows = rubbings.map((rubbing) => {
+    const damages = db.damages.filter((d) => d.rubbingId === rubbing.id);
+    return {
+      id: rubbing.id,
+      code: rubbing.code,
+      source: rubbing.source,
+      paperSize: rubbing.paperSize,
+      note: rubbing.note || "",
+      damageCount: damages.length,
+      pendingCount: damages.filter((d) => d.status === "pending").length,
+      inRepairCount: damages.filter((d) => d.status === "in_repair").length,
+      repairedCount: damages.filter((d) => d.status === "repaired").length,
+      createdAt: rubbing.createdAt
+    };
+  });
+
+  return generateCsv(headers, rows);
+}
+
+function exportDamagesCsv(db, filters = {}) {
+  const { status, type, startDate, endDate } = filters;
+  const start = parseDateRange(startDate);
+  const end = parseDateRange(endDate, true);
+
+  let damages = db.damages.filter((d) => {
+    if (status && d.status !== status) return false;
+    if (type && d.type !== type) return false;
+    return true;
+  });
+  damages = filterByDateRange(damages, start, end);
+
+  const rubbingMap = new Map(db.rubbings.map((r) => [r.id, r]));
+  const batchMap = new Map(db.batches.map((b) => [b.id, b]));
+
+  const headers = [
+    { key: "id", label: "缺损ID" },
+    { key: "rubbingCode", label: "拓片编号" },
+    { key: "rubbingSource", label: "拓片来源" },
+    { key: "position", label: "缺损位置" },
+    { key: "type", label: "缺损类型" },
+    { key: "statusText", label: "修补状态" },
+    { key: "reviewStatusText", label: "审核状态" },
+    { key: "batchName", label: "所属批次" },
+    { key: "repairNote", label: "修补说明" },
+    { key: "rejectReason", label: "驳回原因" },
+    { key: "beforePhotoUrl", label: "修补前照片" },
+    { key: "afterPhotoUrl", label: "修补后照片" },
+    { key: "createdAt", label: "创建时间" },
+    { key: "repairedAt", label: "修补完成时间" }
+  ];
+
+  const rows = damages.map((damage) => {
+    const rubbing = rubbingMap.get(damage.rubbingId) || {};
+    const batch = damage.batchId ? batchMap.get(damage.batchId) : null;
+    return {
+      id: damage.id,
+      rubbingCode: rubbing.code || "",
+      rubbingSource: rubbing.source || "",
+      position: damage.position,
+      type: damage.type,
+      statusText: getStatusText(damage.status),
+      reviewStatusText: getStatusText(damage.reviewStatus),
+      batchName: batch ? batch.name : "",
+      repairNote: damage.repairNote || "",
+      rejectReason: damage.rejectReason || "",
+      beforePhotoUrl: damage.beforePhotoUrl || "",
+      afterPhotoUrl: damage.afterPhotoUrl || "",
+      createdAt: damage.createdAt,
+      repairedAt: damage.repairedAt || ""
+    };
+  });
+
+  return generateCsv(headers, rows);
+}
+
+function exportBatchesCsv(db, filters = {}) {
+  const { status, startDate, endDate } = filters;
+  const start = parseDateRange(startDate);
+  const end = parseDateRange(endDate, true);
+
+  let batches = db.batches.filter((b) => {
+    if (status && b.status !== status) return false;
+    return true;
+  });
+  batches = filterByDateRange(batches, start, end);
+
+  const headers = [
+    { key: "id", label: "批次ID" },
+    { key: "name", label: "批次名称" },
+    { key: "statusText", label: "批次状态" },
+    { key: "totalDamages", label: "缺损总数" },
+    { key: "pendingCount", label: "待修补数" },
+    { key: "inRepairCount", label: "修补中数" },
+    { key: "repairedCount", label: "已修补数" },
+    { key: "responsible", label: "负责人" },
+    { key: "plannedStartAt", label: "计划开始时间" },
+    { key: "plannedEndAt", label: "计划结束时间" },
+    { key: "note", label: "备注" },
+    { key: "createdAt", label: "创建时间" },
+    { key: "completedAt", label: "完成时间" }
+  ];
+
+  const rows = batches.map((batch) => {
+    const damages = db.damages.filter((d) => batch.damageIds.includes(d.id));
+    return {
+      id: batch.id,
+      name: batch.name,
+      statusText: getStatusText(batch.status),
+      totalDamages: damages.length,
+      pendingCount: damages.filter((d) => d.status === "pending").length,
+      inRepairCount: damages.filter((d) => d.status === "in_repair").length,
+      repairedCount: damages.filter((d) => d.status === "repaired").length,
+      responsible: batch.responsible || "",
+      plannedStartAt: batch.plannedStartAt || "",
+      plannedEndAt: batch.plannedEndAt || "",
+      note: batch.note || "",
+      createdAt: batch.createdAt,
+      completedAt: batch.completedAt || ""
+    };
+  });
+
+  return generateCsv(headers, rows);
+}
+
+function exportRepairResultsCsv(db, filters = {}) {
+  const { status, type, startDate, endDate } = filters;
+  const start = parseDateRange(startDate);
+  const end = parseDateRange(endDate, true);
+
+  let damages = db.damages.filter((d) => {
+    if (status && d.status !== status) return false;
+    if (type && d.type !== type) return false;
+    return true;
+  });
+  damages = filterByDateRange(damages, start, end, "repairedAt");
+
+  const rubbingMap = new Map(db.rubbings.map((r) => [r.id, r]));
+  const batchMap = new Map(db.batches.map((b) => [b.id, b]));
+  const imagesMap = new Map();
+  db.repairImages.forEach((img) => {
+    if (!imagesMap.has(img.damageId)) {
+      imagesMap.set(img.damageId, { before_repair: [], during_repair: [], after_repair: [] });
+    }
+    if (imagesMap.get(img.damageId)[img.stage]) {
+      imagesMap.get(img.damageId)[img.stage].push(img);
+    }
+  });
+
+  const headers = [
+    { key: "id", label: "缺损ID" },
+    { key: "rubbingCode", label: "拓片编号" },
+    { key: "rubbingSource", label: "拓片来源" },
+    { key: "position", label: "缺损位置" },
+    { key: "type", label: "缺损类型" },
+    { key: "statusText", label: "修补状态" },
+    { key: "batchName", label: "所属批次" },
+    { key: "repairNote", label: "修补说明" },
+    { key: "beforeImageCount", label: "修补前影像数" },
+    { key: "duringImageCount", label: "修补中影像数" },
+    { key: "afterImageCount", label: "修补后影像数" },
+    { key: "beforePhotoUrl", label: "修补前照片" },
+    { key: "afterPhotoUrl", label: "修补后照片" },
+    { key: "createdAt", label: "创建时间" },
+    { key: "repairedAt", label: "修补完成时间" }
+  ];
+
+  const rows = damages.map((damage) => {
+    const rubbing = rubbingMap.get(damage.rubbingId) || {};
+    const batch = damage.batchId ? batchMap.get(damage.batchId) : null;
+    const images = imagesMap.get(damage.id) || { before_repair: [], during_repair: [], after_repair: [] };
+    return {
+      id: damage.id,
+      rubbingCode: rubbing.code || "",
+      rubbingSource: rubbing.source || "",
+      position: damage.position,
+      type: damage.type,
+      statusText: getStatusText(damage.status),
+      batchName: batch ? batch.name : "",
+      repairNote: damage.repairNote || "",
+      beforeImageCount: images.before_repair.length,
+      duringImageCount: images.during_repair.length,
+      afterImageCount: images.after_repair.length,
+      beforePhotoUrl: damage.beforePhotoUrl || "",
+      afterPhotoUrl: damage.afterPhotoUrl || "",
+      createdAt: damage.createdAt,
+      repairedAt: damage.repairedAt || ""
+    };
+  });
+
+  return generateCsv(headers, rows);
+}
+
+function sendCsv(res, filename, content) {
+  const encodedFilename = encodeURIComponent(filename);
+  res.writeHead(200, {
+    "Content-Type": "text/csv; charset=utf-8",
+    "Content-Disposition": `attachment; filename*=UTF-8''${encodedFilename}`,
+    "Content-Length": Buffer.byteLength("\uFEFF" + content, "utf8")
+  });
+  res.end("\uFEFF" + content);
 }
 
 async function handle(req, res) {
@@ -796,6 +1075,43 @@ async function handle(req, res) {
       startDate: startDate,
       endDate: endDate
     });
+  }
+
+  if (req.method === "GET" && pathname === "/export/rubbings") {
+    const startDate = url.searchParams.get("startDate");
+    const endDate = url.searchParams.get("endDate");
+    const csv = exportRubbingsCsv(db, { startDate, endDate });
+    const filename = `拓片数据_${new Date().toISOString().slice(0, 10)}.csv`;
+    return sendCsv(res, filename, csv);
+  }
+
+  if (req.method === "GET" && pathname === "/export/damages") {
+    const status = url.searchParams.get("status");
+    const type = url.searchParams.get("type");
+    const startDate = url.searchParams.get("startDate");
+    const endDate = url.searchParams.get("endDate");
+    const csv = exportDamagesCsv(db, { status, type, startDate, endDate });
+    const filename = `缺损项数据_${new Date().toISOString().slice(0, 10)}.csv`;
+    return sendCsv(res, filename, csv);
+  }
+
+  if (req.method === "GET" && pathname === "/export/batches") {
+    const status = url.searchParams.get("status");
+    const startDate = url.searchParams.get("startDate");
+    const endDate = url.searchParams.get("endDate");
+    const csv = exportBatchesCsv(db, { status, startDate, endDate });
+    const filename = `批次数据_${new Date().toISOString().slice(0, 10)}.csv`;
+    return sendCsv(res, filename, csv);
+  }
+
+  if (req.method === "GET" && pathname === "/export/repair-results") {
+    const status = url.searchParams.get("status");
+    const type = url.searchParams.get("type");
+    const startDate = url.searchParams.get("startDate");
+    const endDate = url.searchParams.get("endDate");
+    const csv = exportRepairResultsCsv(db, { status, type, startDate, endDate });
+    const filename = `修补结果数据_${new Date().toISOString().slice(0, 10)}.csv`;
+    return sendCsv(res, filename, csv);
   }
 
   return send(res, 404, { error: "接口不存在", routes });
