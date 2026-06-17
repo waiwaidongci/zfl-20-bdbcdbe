@@ -12,9 +12,14 @@ const AUDIT_ACTION_TYPES = {
   CREATE_RUBBING: "create_rubbing",
   REGISTER_DAMAGE: "register_damage",
   UPDATE_DAMAGE: "update_damage",
+  APPROVE_DAMAGE: "approve_damage",
+  REJECT_DAMAGE: "reject_damage",
   CREATE_BATCH: "create_batch",
   COMPLETE_BATCH: "complete_batch",
-  ROLLBACK_BATCH: "rollback_batch"
+  ROLLBACK_BATCH: "rollback_batch",
+  ARCHIVE_IMAGES: "archive_images",
+  RESTORE_BACKUP: "restore_backup",
+  IMPORT_CONFIRM: "import_confirm"
 };
 
 const BACKUP_ERRORS = {
@@ -111,7 +116,7 @@ const routes = [
   "POST /backups",
   "GET /backups/:filename/validate",
   "POST /backups/:filename/restore",
-  "GET /audit-logs?actionType=&targetId="
+  "GET /audit-logs?actionType=&targetId=&targetType=&startDate=&endDate=&success="
 ];
 
 async function ensureDb() {
@@ -261,7 +266,7 @@ async function writeAuditEntry(entry) {
   await writeAuditLog(logs);
 }
 
-function buildChangeSummary(actionType, oldValues, newValues) {
+function buildChangeSummary(actionType, oldValues, newValues, extra) {
   switch (actionType) {
     case AUDIT_ACTION_TYPES.CREATE_RUBBING:
       return `创建拓片：编号 ${newValues.code}，来源 ${newValues.source}`;
@@ -276,27 +281,45 @@ function buildChangeSummary(actionType, oldValues, newValues) {
       if (oldValues.afterPhotoUrl !== newValues.afterPhotoUrl) changes.push(`修补后照片已更新`);
       return `更新缺损：${changes.length > 0 ? changes.join("; ") : "无字段变更"}`;
     }
+    case AUDIT_ACTION_TYPES.APPROVE_DAMAGE:
+      return `审核通过：缺损 ${newValues.id}，审核人 ${newValues.reviewedBy || "系统审核"}，状态 ${oldValues.reviewStatus} → ${newValues.reviewStatus}`;
+    case AUDIT_ACTION_TYPES.REJECT_DAMAGE:
+      return `审核驳回：缺损 ${newValues.id}，审核人 ${newValues.reviewedBy || "系统审核"}，驳回原因：${newValues.rejectReason || "未填写"}`;
     case AUDIT_ACTION_TYPES.CREATE_BATCH:
       return `创建批次：${newValues.name}，包含 ${newValues.damageIds.length} 项缺损`;
     case AUDIT_ACTION_TYPES.COMPLETE_BATCH:
       return `完成批次：${newValues.name}，共完成 ${newValues.damageIds.length} 项缺损修补`;
     case AUDIT_ACTION_TYPES.ROLLBACK_BATCH:
       return `回滚批次：${oldValues.name}，恢复 ${oldValues.damageIds.length} 项缺损状态`;
+    case AUDIT_ACTION_TYPES.ARCHIVE_IMAGES: {
+      const count = extra?.imageCount || (Array.isArray(newValues) ? newValues.length : 0);
+      const damageId = extra?.damageId || (newValues && newValues[0]?.damageId) || "unknown";
+      return `影像归档：缺损 ${damageId}，新增 ${count} 张影像`;
+    }
+    case AUDIT_ACTION_TYPES.RESTORE_BACKUP:
+      return `备份恢复：从 ${oldValues.filename} 恢复，拓片 ${oldValues.dataCounts?.rubbings || "?"} 张，缺损 ${oldValues.dataCounts?.damages || "?"} 项`;
+    case AUDIT_ACTION_TYPES.IMPORT_CONFIRM: {
+      const imported = extra?.imported || { rubbings: 0, damages: 0 };
+      const skipped = extra?.skipped || { rubbings: 0, damages: 0 };
+      return `导入确认：成功导入拓片 ${imported.rubbings} 张、缺损 ${imported.damages} 项；跳过拓片 ${skipped.rubbings} 张、缺损 ${skipped.damages} 项`;
+    }
     default:
       return `${actionType}: target ${newValues?.id || "unknown"}`;
   }
 }
 
-async function executeWithAudit({ actionType, targetType, targetId, oldValues, newValues, businessResult, statusCode, res }) {
+async function executeWithAudit({ actionType, targetType, targetId, oldValues, newValues, extra, businessResult, statusCode, res, success = true }) {
   try {
-    const changeSummary = buildChangeSummary(actionType, oldValues, newValues);
+    const changeSummary = buildChangeSummary(actionType, oldValues, newValues, extra);
     await writeAuditEntry({
       actionType,
       targetType,
       targetId,
+      success,
       changeSummary,
       oldValues: oldValues || null,
-      newValues: newValues || null
+      newValues: newValues || null,
+      extra: extra || null
     });
     return send(res, statusCode, businessResult);
   } catch (auditError) {
@@ -308,10 +331,22 @@ async function executeWithAudit({ actionType, targetType, targetId, oldValues, n
   }
 }
 
-function queryAuditLogs(logs, { actionType, targetId } = {}) {
+function queryAuditLogs(logs, { actionType, targetId, targetType, startDate, endDate, success } = {}) {
+  const start = startDate ? new Date(startDate) : null;
+  const end = endDate ? new Date(endDate) : null;
+  if (start && isNaN(start.getTime())) return [];
+  if (end && isNaN(end.getTime())) return [];
+
   return logs.filter((entry) => {
     if (actionType && entry.actionType !== actionType) return false;
     if (targetId && entry.targetId !== targetId) return false;
+    if (targetType && entry.targetType !== targetType) return false;
+    if (success !== undefined && success !== null && entry.success !== success) return false;
+    if (start || end) {
+      const entryTime = new Date(entry.timestamp);
+      if (start && entryTime < start) return false;
+      if (end && entryTime > end) return false;
+    }
     return true;
   }).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 }
@@ -1309,12 +1344,23 @@ async function handle(req, res) {
       return send(res, 400, { error: "当前审核状态不是待审核，无法执行审核通过操作" });
     }
     const body = await parseBody(req);
+    const oldValues = { ...damage };
     damage.reviewStatus = "approved";
     damage.rejectReason = "";
     damage.reviewedBy = body.reviewedBy || "系统审核";
     damage.reviewedAt = new Date().toISOString();
     await writeDb(db);
-    return send(res, 200, { data: normalizeDamage(damage) });
+    const businessResult = { data: normalizeDamage(damage) };
+    return executeWithAudit({
+      actionType: AUDIT_ACTION_TYPES.APPROVE_DAMAGE,
+      targetType: "damage",
+      targetId: damage.id,
+      oldValues,
+      newValues: { ...damage },
+      businessResult,
+      statusCode: 200,
+      res
+    });
   }
 
   const rejectMatch = pathname.match(/^\/damages\/([^/]+)\/reject$/);
@@ -1329,12 +1375,23 @@ async function handle(req, res) {
     if (!body.reason || typeof body.reason !== "string" || body.reason.trim() === "") {
       return send(res, 400, { error: "驳回原因不能为空" });
     }
+    const oldValues = { ...damage };
     damage.reviewStatus = "rejected";
     damage.rejectReason = body.reason.trim();
     damage.reviewedBy = body.reviewedBy || "系统审核";
     damage.reviewedAt = new Date().toISOString();
     await writeDb(db);
-    return send(res, 200, { data: normalizeDamage(damage) });
+    const businessResult = { data: normalizeDamage(damage) };
+    return executeWithAudit({
+      actionType: AUDIT_ACTION_TYPES.REJECT_DAMAGE,
+      targetType: "damage",
+      targetId: damage.id,
+      oldValues,
+      newValues: { ...damage },
+      businessResult,
+      statusCode: 200,
+      res
+    });
   }
 
   const damageImagesMatch = pathname.match(/^\/damages\/([^/]+)\/images$/);
@@ -1370,6 +1427,7 @@ async function handle(req, res) {
       }
 
       const created = [];
+      const createdRecords = [];
       imagesInput.forEach((entry) => {
         const record = {
           id: makeId("img"),
@@ -1383,11 +1441,22 @@ async function handle(req, res) {
           createdAt: new Date().toISOString()
         };
         db.repairImages.push(record);
+        createdRecords.push(record);
         created.push(normalizeRepairImage(record));
       });
 
       await writeDb(db);
-      return send(res, 201, { data: created });
+      const businessResult = { data: created };
+      return executeWithAudit({
+        actionType: AUDIT_ACTION_TYPES.ARCHIVE_IMAGES,
+        targetType: "damage",
+        targetId: damageId,
+        newValues: createdRecords,
+        extra: { damageId, imageCount: createdRecords.length },
+        businessResult,
+        statusCode: 201,
+        res
+      });
     }
   }
 
@@ -1931,16 +2000,19 @@ async function handle(req, res) {
       damageRowMapping[key] = value;
     });
 
-    return send(res, 201, {
-      imported: {
-        rubbings: rubbingRowMap.size,
-        damages: damageRowMap.size
-      },
+    const imported = {
+      rubbings: rubbingRowMap.size,
+      damages: damageRowMap.size
+    };
+    const skipped = {
+      rubbings: result.rubbings.length - rubbingRowMap.size,
+      damages: result.damages.length - damageRowMap.size
+    };
+
+    const businessResult = {
+      imported,
       total: result.total,
-      skipped: {
-        rubbings: result.rubbings.length - rubbingRowMap.size,
-        damages: result.damages.length - damageRowMap.size
-      },
+      skipped,
       rowMapping: {
         rubbings: rubbingRowMapping,
         damages: damageRowMapping
@@ -1950,6 +2022,17 @@ async function handle(req, res) {
         status: VALID_REPAIR_STATUSES,
         reviewStatus: VALID_REVIEW_STATUSES
       }
+    };
+
+    return executeWithAudit({
+      actionType: AUDIT_ACTION_TYPES.IMPORT_CONFIRM,
+      targetType: "import",
+      targetId: "import_" + Date.now().toString(36),
+      newValues: { imported, total: result.total, skipped, onlyValid },
+      extra: { imported, skipped, total: result.total, onlyValid },
+      businessResult,
+      statusCode: 201,
+      res
     });
   }
 
@@ -2078,8 +2161,30 @@ async function handle(req, res) {
   if (backupRestoreMatch && req.method === "POST") {
     const filename = sanitizeBackupFilename(decodeURIComponent(backupRestoreMatch[1]));
     try {
+      let backupInfo;
+      try {
+        const backupValidation = await validateBackup(filename);
+        backupInfo = {
+          filename: backupValidation.filename,
+          dataCounts: backupValidation.dataCounts,
+          createdAt: backupValidation.createdAt,
+          size: backupValidation.size
+        };
+      } catch {
+        backupInfo = { filename, dataCounts: null, createdAt: null, size: null };
+      }
       const result = await restoreFromBackup(filename);
-      return send(res, 200, { data: result });
+      const businessResult = { data: result };
+      return executeWithAudit({
+        actionType: AUDIT_ACTION_TYPES.RESTORE_BACKUP,
+        targetType: "backup",
+        targetId: filename,
+        oldValues: backupInfo,
+        newValues: { restoredAt: result.restoredAt, dataCounts: result.dataCounts },
+        businessResult,
+        statusCode: 200,
+        res
+      });
     } catch (error) {
       return send(res, error.status || 500, {
         error: error.message,
@@ -2091,8 +2196,16 @@ async function handle(req, res) {
   if (req.method === "GET" && pathname === "/audit-logs") {
     const actionType = url.searchParams.get("actionType");
     const targetId = url.searchParams.get("targetId");
+    const targetType = url.searchParams.get("targetType");
+    const startDate = url.searchParams.get("startDate");
+    const endDate = url.searchParams.get("endDate");
+    const successParam = url.searchParams.get("success");
+    let success = undefined;
+    if (successParam !== null && successParam !== undefined) {
+      success = successParam === "true" || successParam === "1";
+    }
     const logs = await readAuditLog();
-    const filtered = queryAuditLogs(logs, { actionType, targetId });
+    const filtered = queryAuditLogs(logs, { actionType, targetId, targetType, startDate, endDate, success });
     return send(res, 200, { data: filtered, total: filtered.length });
   }
 
