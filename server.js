@@ -48,7 +48,8 @@ const initialData = {
       repairedAt: null
     }
   ],
-  batches: []
+  batches: [],
+  repairImages: []
 };
 
 const routes = [
@@ -61,6 +62,8 @@ const routes = [
   "PATCH /damages/:id",
   "POST /damages/:id/approve",
   "POST /damages/:id/reject",
+  "GET /damages/:id/images",
+  "POST /damages/:id/images",
   "GET /batches",
   "POST /batches",
   "GET /batches/:id",
@@ -83,7 +86,9 @@ async function ensureDb() {
 
 async function readDb() {
   await ensureDb();
-  return JSON.parse(await readFile(DB_FILE, "utf8"));
+  const data = JSON.parse(await readFile(DB_FILE, "utf8"));
+  if (!data.repairImages) data.repairImages = [];
+  return data;
 }
 
 async function writeDb(data) {
@@ -127,6 +132,29 @@ function normalizeDamage(damage) {
     reviewStatus: damage.reviewStatus || "approved",
     rejectReason: damage.rejectReason || ""
   };
+}
+
+const VALID_STAGES = ["before_repair", "during_repair", "after_repair"];
+
+function groupImagesByStage(images) {
+  const grouped = { before_repair: [], during_repair: [], after_repair: [] };
+  images.forEach((img) => {
+    if (grouped[img.stage]) {
+      grouped[img.stage].push(img);
+    }
+  });
+  return grouped;
+}
+
+function validateImageEntry(entry, index) {
+  const errors = [];
+  if (!entry.stage || !VALID_STAGES.includes(entry.stage)) {
+    errors.push(`第${index + 1}张图片阶段无效，必须是 before_repair / during_repair / after_repair`);
+  }
+  if (!entry.url || typeof entry.url !== "string" || entry.url.trim() === "") {
+    errors.push(`第${index + 1}张图片URL不能为空`);
+  }
+  return errors;
 }
 
 function findRubbing(db, rubbingId) {
@@ -347,7 +375,8 @@ async function handle(req, res) {
     });
     damage.repairedAt = damage.status === "repaired" ? new Date().toISOString() : damage.repairedAt;
     await writeDb(db);
-    return send(res, 200, { data: normalizeDamage(damage) });
+    const images = db.repairImages.filter((img) => img.damageId === damage.id);
+    return send(res, 200, { data: { ...normalizeDamage(damage), images: groupImagesByStage(images) } });
   }
 
   const approveMatch = pathname.match(/^\/damages\/([^/]+)\/approve$/);
@@ -380,6 +409,53 @@ async function handle(req, res) {
     damage.rejectReason = body.reason.trim();
     await writeDb(db);
     return send(res, 200, { data: normalizeDamage(damage) });
+  }
+
+  const damageImagesMatch = pathname.match(/^\/damages\/([^/]+)\/images$/);
+  if (damageImagesMatch) {
+    const damageId = damageImagesMatch[1];
+    const damage = db.damages.find((item) => item.id === damageId);
+    if (!damage) return send(res, 404, { error: "缺损项不存在" });
+
+    if (req.method === "GET") {
+      const images = db.repairImages.filter((img) => img.damageId === damageId);
+      return send(res, 200, { data: groupImagesByStage(images) });
+    }
+
+    if (req.method === "POST") {
+      const body = await parseBody(req);
+      const imagesInput = Array.isArray(body.images) ? body.images : [body];
+      if (imagesInput.length === 0) {
+        return send(res, 400, { error: "images不能为空数组" });
+      }
+
+      const allErrors = [];
+      imagesInput.forEach((entry, idx) => {
+        allErrors.push(...validateImageEntry(entry, idx));
+      });
+      if (allErrors.length) {
+        return send(res, 400, { error: allErrors.join("; ") });
+      }
+
+      const created = [];
+      imagesInput.forEach((entry) => {
+        const record = {
+          id: makeId("img"),
+          damageId,
+          stage: entry.stage,
+          url: entry.url.trim(),
+          capturedAt: entry.capturedAt || new Date().toISOString(),
+          description: entry.description || "",
+          collector: entry.collector || "",
+          createdAt: new Date().toISOString()
+        };
+        db.repairImages.push(record);
+        created.push(record);
+      });
+
+      await writeDb(db);
+      return send(res, 201, { data: created });
+    }
   }
 
   if (req.method === "GET" && pathname === "/batches") {
@@ -455,6 +531,45 @@ async function handle(req, res) {
     if (!batch) return send(res, 404, { error: "修补批次不存在" });
     const body = await parseBody(req);
     const results = Array.isArray(body.results) ? body.results : [];
+    const archiveImages = Array.isArray(body.archiveImages) ? body.archiveImages : [];
+
+    if (archiveImages.length > 0) {
+      const batchDamageIdSet = new Set(batch.damageIds);
+      const ownershipErrors = [];
+      const stageUrlErrors = [];
+
+      archiveImages.forEach((entry, idx) => {
+        if (!entry.damageId || !batchDamageIdSet.has(entry.damageId)) {
+          ownershipErrors.push(`第${idx + 1}条影像的缺损项 ${entry.damageId || "null"} 不属于当前批次`);
+        }
+        const entryErrors = validateImageEntry(entry, idx);
+        if (entryErrors.length) {
+          stageUrlErrors.push(...entryErrors);
+        }
+      });
+
+      if (ownershipErrors.length) {
+        return send(res, 400, { error: `影像归档归属校验失败：${ownershipErrors.join("; ")}` });
+      }
+      if (stageUrlErrors.length) {
+        return send(res, 400, { error: stageUrlErrors.join("; ") });
+      }
+
+      archiveImages.forEach((entry) => {
+        const record = {
+          id: makeId("img"),
+          damageId: entry.damageId,
+          stage: entry.stage,
+          url: entry.url.trim(),
+          capturedAt: entry.capturedAt || new Date().toISOString(),
+          description: entry.description || "",
+          collector: entry.collector || "",
+          createdAt: new Date().toISOString()
+        };
+        db.repairImages.push(record);
+      });
+    }
+
     batch.status = "completed";
     batch.completedAt = new Date().toISOString();
     batch.note = body.note ?? batch.note;
