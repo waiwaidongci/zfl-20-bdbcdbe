@@ -1,22 +1,290 @@
 {
   "schemaVersion": 2,
   "meta": {
-    "createdAt": "2026-06-17T06:35:57.300Z",
-    "lastModifiedAt": "2026-06-17T06:35:57.300Z",
-    "migrationHistory": [],
+    "createdAt": "2026-06-17T04:01:13.989Z",
+    "lastModifiedAt": "2026-06-17T05:40:55.876Z",
+    "migrationHistory": [
+      {
+        "fromVersion": 0,
+        "toVersion": 2,
+        "migratedAt": "2026-06-17T04:01:13.989Z",
+        "backupFile": "migration_backup_20260617_120113988_v0tov2_r6byv7.json",
+        "note": "经 v0 -> v1 升级"
+      }
+    ],
     "dataStatistics": {
-      "rubbings": 0,
-      "damages": 0,
-      "batches": 0,
-      "repairImages": 0,
+      "rubbings": 7,
+      "damages": 7,
+      "batches": 3,
+      "repairImages": 5,
       "batchSnapshots": 0
     }
   },
   "entities": {
-    "rubbings": [],
-    "damages": [],
-    "batches": [],
-    "repairImages": [],
+    "rubbings": [
+      {
+        "id": "r1",
+        "code": "TP-清-014",
+        "source": "地方碑刻残页",
+        "paperSize": "42x68cm",
+        "note": "边缘有旧折痕",
+        "createdAt": "2026-01-15T00:00:00.000Z"
+      },
+      {
+        "id": "r2",
+        "code": "TP-明-007",
+        "source": "明代墓志拓片",
+        "paperSize": "60x90cm",
+        "note": "",
+        "createdAt": "2026-02-20T00:00:00.000Z"
+      },
+      {
+        "id": "r3",
+        "code": "TP-宋-023",
+        "source": "宋代摩崖石刻",
+        "paperSize": "80x120cm",
+        "note": "大面积风化",
+        "createdAt": "2026-03-10T00:00:00.000Z"
+      },
+      {
+        "id": "rubbing_mqhhe8fe_f721ne",
+        "code": "TP-测试-001",
+        "source": "测试来源",
+        "paperSize": "30x40cm",
+        "note": "测试拓片",
+        "createdAt": "2026-06-17T02:58:13.418Z"
+      },
+      {
+        "id": "rubbing_mqhju5u2_6ns6fr",
+        "code": "TP-测试迁移-001",
+        "source": "迁移测试来源",
+        "paperSize": "50x70cm",
+        "note": "迁移后写入测试",
+        "createdAt": "2026-06-17T04:06:35.786Z"
+      },
+      {
+        "id": "rubbing_mqhl4yx1_y17rwr",
+        "code": "FIX-TEST-001",
+        "source": "修复验证",
+        "paperSize": "50x50cm",
+        "note": "测试修复后写入",
+        "createdAt": "2026-06-17T04:42:59.653Z"
+      },
+      {
+        "id": "rubbing_mqhn7h6r_56axje",
+        "code": "VERIFY-001",
+        "source": "最终验证",
+        "paperSize": "10x10cm",
+        "note": "验证写入",
+        "createdAt": "2026-06-17T05:40:55.875Z"
+      }
+    ],
+    "damages": [
+      {
+        "id": "d1",
+        "rubbingId": "r1",
+        "position": "左上角",
+        "type": "虫蛀孔",
+        "beforePhotoUrl": "x.jpg",
+        "afterPhotoUrl": "a1.jpg",
+        "status": "repaired",
+        "repairNote": "使用日本和纸修补",
+        "batchId": "b1",
+        "createdAt": "2026-01-16T00:00:00.000Z",
+        "repairedAt": "2026-06-10T00:00:00.000Z",
+        "reviewStatus": "approved",
+        "rejectReason": ""
+      },
+      {
+        "id": "d2",
+        "rubbingId": "r1",
+        "position": "下边缘",
+        "type": "撕裂",
+        "beforePhotoUrl": "x.jpg",
+        "afterPhotoUrl": "",
+        "status": "in_repair",
+        "repairNote": "",
+        "batchId": "b1",
+        "createdAt": "2026-01-16T00:00:00.000Z",
+        "repairedAt": null,
+        "reviewStatus": "approved",
+        "rejectReason": ""
+      },
+      {
+        "id": "d3",
+        "rubbingId": "r2",
+        "position": "中央区域",
+        "type": "霉斑",
+        "beforePhotoUrl": "x.jpg",
+        "afterPhotoUrl": "a3.jpg",
+        "status": "repaired",
+        "repairNote": "化学去霉处理",
+        "batchId": "b2",
+        "createdAt": "2026-02-21T00:00:00.000Z",
+        "repairedAt": "2026-06-12T00:00:00.000Z",
+        "reviewStatus": "approved",
+        "rejectReason": ""
+      },
+      {
+        "id": "d4",
+        "rubbingId": "r2",
+        "position": "右上角",
+        "type": "虫蛀孔",
+        "beforePhotoUrl": "x.jpg",
+        "afterPhotoUrl": "",
+        "status": "pending",
+        "repairNote": "",
+        "batchId": null,
+        "createdAt": "2026-02-21T00:00:00.000Z",
+        "repairedAt": null,
+        "reviewStatus": "review_pending",
+        "rejectReason": ""
+      },
+      {
+        "id": "d5",
+        "rubbingId": "r3",
+        "position": "左侧1/3处",
+        "type": "风化缺损",
+        "beforePhotoUrl": "x.jpg",
+        "afterPhotoUrl": "",
+        "status": "in_repair",
+        "repairNote": "",
+        "batchId": "b2",
+        "createdAt": "2026-03-11T00:00:00.000Z",
+        "repairedAt": null,
+        "reviewStatus": "approved",
+        "rejectReason": ""
+      },
+      {
+        "id": "d6",
+        "rubbingId": "r3",
+        "position": "底部边缘",
+        "type": "撕裂",
+        "beforePhotoUrl": "x.jpg",
+        "afterPhotoUrl": "a6.jpg",
+        "status": "repaired",
+        "repairNote": "托裱加固",
+        "batchId": "b1",
+        "createdAt": "2026-03-11T00:00:00.000Z",
+        "repairedAt": "2026-06-11T00:00:00.000Z",
+        "reviewStatus": "rejected",
+        "rejectReason": "修补颜色偏差较大"
+      },
+      {
+        "id": "damage_mqhhf16l_uilv6h",
+        "rubbingId": "rubbing_mqhhe8fe_f721ne",
+        "position": "测试位置",
+        "type": "虫蛀",
+        "beforePhotoUrl": "https://example.com/test.jpg",
+        "afterPhotoUrl": "https://example.com/after.jpg",
+        "status": "repaired",
+        "repairNote": "修补完成，效果良好",
+        "batchId": "batch_mqhhgufv_wlh9i4",
+        "reviewStatus": "approved",
+        "rejectReason": "",
+        "createdAt": "2026-06-17T02:58:50.685Z",
+        "repairedAt": "2026-06-17T03:00:36.051Z"
+      }
+    ],
+    "batches": [
+      {
+        "id": "b1",
+        "name": "六月第一批修补",
+        "status": "completed",
+        "damageIds": [
+          "d1",
+          "d2",
+          "d6"
+        ],
+        "note": "重点处理虫蛀和撕裂问题",
+        "createdAt": "2026-06-01T00:00:00.000Z",
+        "completedAt": "2026-06-15T00:00:00.000Z",
+        "plannedStartAt": "2026-06-05T00:00:00.000Z",
+        "plannedEndAt": "2026-06-20T00:00:00.000Z",
+        "responsible": "张师傅"
+      },
+      {
+        "id": "b2",
+        "name": "六月第二批修补",
+        "status": "open",
+        "damageIds": [
+          "d3",
+          "d5"
+        ],
+        "note": "处理霉斑和风化",
+        "createdAt": "2026-06-08T00:00:00.000Z",
+        "completedAt": null,
+        "plannedStartAt": "2026-06-10T00:00:00.000Z",
+        "plannedEndAt": "2026-06-25T00:00:00.000Z",
+        "responsible": "李师傅"
+      },
+      {
+        "id": "batch_mqhhgufv_wlh9i4",
+        "name": "测试批次001",
+        "status": "completed",
+        "damageIds": [
+          "damage_mqhhf16l_uilv6h"
+        ],
+        "note": "批次完成",
+        "plannedStartAt": null,
+        "plannedEndAt": null,
+        "responsible": null,
+        "createdAt": "2026-06-17T03:00:15.259Z",
+        "completedAt": "2026-06-17T03:00:36.051Z"
+      }
+    ],
+    "repairImages": [
+      {
+        "id": "img1",
+        "damageId": "d1",
+        "stage": "before_repair",
+        "url": "https://example.com/b1.jpg",
+        "capturedAt": "2026-06-05T00:00:00.000Z",
+        "description": "修补前虫蛀孔",
+        "collector": "张师傅",
+        "createdAt": "2026-06-05T00:00:00.000Z"
+      },
+      {
+        "id": "img2",
+        "damageId": "d1",
+        "stage": "after_repair",
+        "url": "https://example.com/a1.jpg",
+        "capturedAt": "2026-06-10T00:00:00.000Z",
+        "description": "修补后效果",
+        "collector": "张师傅",
+        "createdAt": "2026-06-10T00:00:00.000Z"
+      },
+      {
+        "id": "img3",
+        "damageId": "d3",
+        "stage": "before_repair",
+        "url": "https://example.com/b3.jpg",
+        "capturedAt": "2026-06-10T00:00:00.000Z",
+        "description": "修补前霉斑",
+        "collector": "李师傅",
+        "createdAt": "2026-06-10T00:00:00.000Z"
+      },
+      {
+        "id": "img4",
+        "damageId": "d3",
+        "stage": "during_repair",
+        "url": "https://example.com/d3.jpg",
+        "capturedAt": "2026-06-11T00:00:00.000Z",
+        "description": "去霉处理中",
+        "collector": "李师傅",
+        "createdAt": "2026-06-11T00:00:00.000Z"
+      },
+      {
+        "id": "img5",
+        "damageId": "d3",
+        "stage": "after_repair",
+        "url": "https://example.com/a3.jpg",
+        "capturedAt": "2026-06-12T00:00:00.000Z",
+        "description": "修补完成",
+        "collector": "李师傅",
+        "createdAt": "2026-06-12T00:00:00.000Z"
+      }
+    ],
     "batchSnapshots": []
   },
   "imageArchive": {
