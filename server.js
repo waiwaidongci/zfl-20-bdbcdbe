@@ -12,7 +12,8 @@ const AUDIT_ACTION_TYPES = {
   REGISTER_DAMAGE: "register_damage",
   UPDATE_DAMAGE: "update_damage",
   CREATE_BATCH: "create_batch",
-  COMPLETE_BATCH: "complete_batch"
+  COMPLETE_BATCH: "complete_batch",
+  ROLLBACK_BATCH: "rollback_batch"
 };
 
 const BACKUP_ERRORS = {
@@ -65,7 +66,8 @@ const initialData = {
     }
   ],
   batches: [],
-  repairImages: []
+  repairImages: [],
+  batchSnapshots: []
 };
 
 const routes = [
@@ -84,6 +86,7 @@ const routes = [
   "POST /batches",
   "GET /batches/:id",
   "POST /batches/:id/complete",
+  "POST /batches/:id/rollback",
   "POST /import/precheck",
   "POST /import/confirm",
   "GET /dashboard/repair-workbench?type=&rubbingId=&batchId=",
@@ -113,6 +116,7 @@ async function readDb() {
   await ensureDb();
   const data = JSON.parse(await readFile(DB_FILE, "utf8"));
   if (!data.repairImages) data.repairImages = [];
+  if (!data.batchSnapshots) data.batchSnapshots = [];
   return data;
 }
 
@@ -167,6 +171,8 @@ function buildChangeSummary(actionType, oldValues, newValues) {
       return `创建批次：${newValues.name}，包含 ${newValues.damageIds.length} 项缺损`;
     case AUDIT_ACTION_TYPES.COMPLETE_BATCH:
       return `完成批次：${newValues.name}，共完成 ${newValues.damageIds.length} 项缺损修补`;
+    case AUDIT_ACTION_TYPES.ROLLBACK_BATCH:
+      return `回滚批次：${oldValues.name}，恢复 ${oldValues.damageIds.length} 项缺损状态`;
     default:
       return `${actionType}: target ${newValues?.id || "unknown"}`;
   }
@@ -217,7 +223,7 @@ function getBackupFilename(timestamp) {
 
 function validateDataStructure(data) {
   if (!data || typeof data !== "object") return false;
-  const requiredKeys = ["rubbings", "damages", "batches", "repairImages"];
+  const requiredKeys = ["rubbings", "damages", "batches", "repairImages", "batchSnapshots"];
   for (const key of requiredKeys) {
     if (!Array.isArray(data[key])) return false;
   }
@@ -1171,7 +1177,16 @@ async function handle(req, res) {
       if (stageUrlErrors.length) {
         return send(res, 400, { error: stageUrlErrors.join("; ") });
       }
+    }
 
+    const batchDamageSnapshots = {};
+    batch.damageIds.forEach((did) => {
+      const d = db.damages.find((x) => x.id === did);
+      if (d) batchDamageSnapshots[did] = JSON.parse(JSON.stringify(d));
+    });
+
+    const addedImageIds = [];
+    if (archiveImages.length > 0) {
       archiveImages.forEach((entry) => {
         const record = {
           id: makeId("img"),
@@ -1183,8 +1198,32 @@ async function handle(req, res) {
           collector: entry.collector || "",
           createdAt: new Date().toISOString()
         };
+        addedImageIds.push(record.id);
         db.repairImages.push(record);
       });
+    }
+
+    const existingSnapshotIdx = db.batchSnapshots.findIndex((s) => s.batchId === batch.id);
+    let snapshot;
+    if (existingSnapshotIdx >= 0) {
+      const existing = db.batchSnapshots[existingSnapshotIdx];
+      snapshot = {
+        ...existing,
+        id: makeId("snap"),
+        createdAt: new Date().toISOString(),
+        addedImageIds: [...(existing.addedImageIds || []), ...addedImageIds]
+      };
+      db.batchSnapshots[existingSnapshotIdx] = snapshot;
+    } else {
+      snapshot = {
+        id: makeId("snap"),
+        batchId: batch.id,
+        createdAt: new Date().toISOString(),
+        batchBefore: JSON.parse(JSON.stringify(batch)),
+        damagesBefore: batchDamageSnapshots,
+        addedImageIds
+      };
+      db.batchSnapshots.push(snapshot);
     }
 
     batch.status = "completed";
@@ -1206,7 +1245,96 @@ async function handle(req, res) {
       targetId: batch.id,
       oldValues,
       newValues: { ...batch },
-      businessResult: { data: enrichedBatch },
+      businessResult: { data: enrichedBatch, snapshotId: snapshot.id },
+      statusCode: 200,
+      res
+    });
+  }
+
+  const rollbackMatch = pathname.match(/^\/batches\/([^/]+)\/rollback$/);
+  if (rollbackMatch && req.method === "POST") {
+    const batchId = rollbackMatch[1];
+    const batch = db.batches.find((item) => item.id === batchId);
+    if (!batch) return send(res, 404, { error: "修补批次不存在" });
+
+    const snapshot = db.batchSnapshots.find((s) => s.batchId === batchId);
+    if (!snapshot) {
+      return send(res, 400, {
+        error: `无法回滚批次 ${batch.name}：未找到完成时的快照数据。该批次可能是在回滚功能上线前完成的旧数据，不支持回滚操作。如需恢复请联系管理员通过备份还原。`,
+        code: "SNAPSHOT_NOT_FOUND",
+        hint: "旧批次数据无快照，仅支持功能上线后新完成的批次回滚"
+      });
+    }
+
+    const batchCompletedAt = batch.completedAt ? new Date(batch.completedAt) : null;
+    const referencedBy = [];
+    db.batches.forEach((other) => {
+      if (other.id === batchId) return;
+      const otherCompletedAt = other.completedAt ? new Date(other.completedAt) : null;
+      if (!otherCompletedAt || !batchCompletedAt) return;
+      if (otherCompletedAt <= batchCompletedAt) return;
+      const overlap = other.damageIds.filter((did) => batch.damageIds.includes(did));
+      if (overlap.length > 0) {
+        referencedBy.push({
+          batchId: other.id,
+          batchName: other.name,
+          completedAt: other.completedAt,
+          overlappingDamageIds: overlap
+        });
+      }
+    });
+    if (referencedBy.length > 0) {
+      const details = referencedBy
+        .map((r) => `批次「${r.batchName}」(${r.batchId}，完成于 ${r.completedAt}) 引用了缺损项: ${r.overlappingDamageIds.join(", ")}`)
+        .join("；");
+      return send(res, 409, {
+        error: `无法回滚批次 ${batch.name}：该批次的缺损项仍被 ${referencedBy.length} 个后续完成的批次引用。${details}`,
+        code: "DAMAGE_REFERENCED_BY_LATER_BATCH",
+        referencedBy
+      });
+    }
+
+    const oldValues = JSON.parse(JSON.stringify(batch));
+    const batchBefore = snapshot.batchBefore;
+    Object.assign(batch, {
+      status: batchBefore.status,
+      completedAt: batchBefore.completedAt,
+      note: batchBefore.note ?? batch.note
+    });
+
+    Object.keys(snapshot.damagesBefore).forEach((did) => {
+      const savedDamage = snapshot.damagesBefore[did];
+      const damage = db.damages.find((d) => d.id === did);
+      if (damage) {
+        Object.assign(damage, {
+          status: savedDamage.status,
+          afterPhotoUrl: savedDamage.afterPhotoUrl,
+          repairNote: savedDamage.repairNote,
+          repairedAt: savedDamage.repairedAt
+        });
+      }
+    });
+
+    if (snapshot.addedImageIds && snapshot.addedImageIds.length > 0) {
+      const addedSet = new Set(snapshot.addedImageIds);
+      db.repairImages = db.repairImages.filter((img) => !addedSet.has(img.id));
+    }
+
+    db.batchSnapshots = db.batchSnapshots.filter((s) => s.batchId !== batchId);
+
+    await writeDb(db);
+    const enrichedBatch = enrichBatch(db, batch);
+    return executeWithAudit({
+      actionType: AUDIT_ACTION_TYPES.ROLLBACK_BATCH,
+      targetType: "batch",
+      targetId: batch.id,
+      oldValues,
+      newValues: { ...batch },
+      businessResult: {
+        data: enrichedBatch,
+        restoredDamageCount: Object.keys(snapshot.damagesBefore).length,
+        removedImageCount: snapshot.addedImageIds ? snapshot.addedImageIds.length : 0
+      },
       statusCode: 200,
       res
     });
