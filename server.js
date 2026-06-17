@@ -17,6 +17,7 @@ const AUDIT_ACTION_TYPES = {
   CREATE_BATCH: "create_batch",
   COMPLETE_BATCH: "complete_batch",
   ROLLBACK_BATCH: "rollback_batch",
+  PARTIAL_ROLLBACK_BATCH: "partial_rollback_batch",
   ARCHIVE_IMAGES: "archive_images",
   RESTORE_BACKUP: "restore_backup",
   IMPORT_CONFIRM: "import_confirm"
@@ -30,6 +31,7 @@ const BACKUP_ERRORS = {
 
 const VALID_REPAIR_STATUSES = ["pending", "in_repair", "repaired"];
 const VALID_REVIEW_STATUSES = ["review_pending", "approved", "rejected"];
+const VALID_BATCH_STATUSES = ["open", "completed", "partially_rolled_back"];
 
 const precheckTokenStore = new Map();
 const PRECHECK_TOKEN_TTL = 5 * 60 * 1000;
@@ -103,6 +105,7 @@ const routes = [
   "GET /batches/:id",
   "POST /batches/:id/complete",
   "POST /batches/:id/rollback",
+  "POST /batches/:id/rollback {damageIds} (partial)",
   "POST /import/precheck",
   "POST /import/confirm",
   "GET /dashboard/repair-workbench?type=&rubbingId=&batchId=&responsible=",
@@ -296,6 +299,8 @@ function buildChangeSummary(actionType, oldValues, newValues, extra) {
     }
     case AUDIT_ACTION_TYPES.ROLLBACK_BATCH:
       return `回滚批次：${oldValues.name}，恢复 ${oldValues.damageIds.length} 项缺损状态`;
+    case AUDIT_ACTION_TYPES.PARTIAL_ROLLBACK_BATCH:
+      return `部分回滚批次：${newValues.name}，回滚 ${extra.rolledBackCount} 项缺损（批次状态：${getStatusText(newValues.status)}）`;
     case AUDIT_ACTION_TYPES.ARCHIVE_IMAGES: {
       const count = extra?.imageCount || (Array.isArray(newValues) ? newValues.length : 0);
       const damageId = extra?.damageId || (newValues && newValues[0]?.damageId) || "unknown";
@@ -770,6 +775,7 @@ function enrichBatch(db, batch) {
     plannedStartAt: batch.plannedStartAt || null,
     plannedEndAt: batch.plannedEndAt || null,
     responsible: batch.responsible || null,
+    rolledBackDamageIds: batch.rolledBackDamageIds || [],
     damages,
     total: damages.length,
     repaired: damages.filter((item) => item.status === "repaired").length,
@@ -851,6 +857,7 @@ function computeRepairWorkbenchDashboard(db, filters = {}) {
     entry.damageCount += batchDamageCount;
     if (batch.status === "open") entry.openBatchCount += 1;
     if (batch.status === "completed") entry.completedBatchCount += 1;
+    if (batch.status === "partially_rolled_back") entry.completedBatchCount += 1;
     if (batch.status === "open" && batch.plannedEndAt && new Date(batch.plannedEndAt) < now) {
       entry.overdueCount += 1;
     }
@@ -863,7 +870,8 @@ function computeRepairWorkbenchDashboard(db, filters = {}) {
     byType,
     totalTypes: byType.length,
     activeBatches: filteredBatches.filter((b) => b.status === "open").length,
-    completedBatches: filteredBatches.filter((b) => b.status === "completed").length,
+    completedBatches: filteredBatches.filter((b) => b.status === "completed" || b.status === "partially_rolled_back").length,
+    partiallyRolledBackBatches: filteredBatches.filter((b) => b.status === "partially_rolled_back").length,
     byResponsible
   };
 }
@@ -923,6 +931,7 @@ function getStatusText(status) {
     repaired: "已修补",
     open: "进行中",
     completed: "已完成",
+    partially_rolled_back: "部分已回滚",
     approved: "已通过",
     rejected: "已驳回",
     review_pending: "待审核"
@@ -1527,6 +1536,7 @@ async function handle(req, res) {
       plannedStartAt: body.plannedStartAt || null,
       plannedEndAt: body.plannedEndAt || null,
       responsible: body.responsible || null,
+      rolledBackDamageIds: [],
       createdAt: new Date().toISOString(),
       completedAt: null
     };
@@ -1621,13 +1631,39 @@ async function handle(req, res) {
 
     const existingSnapshotIdx = db.batchSnapshots.findIndex((s) => s.batchId === batch.id);
     let snapshot;
-    if (existingSnapshotIdx >= 0) {
+    if (existingSnapshotIdx >= 0 && batch.status !== "partially_rolled_back") {
       const existing = db.batchSnapshots[existingSnapshotIdx];
       snapshot = {
         ...existing,
         id: makeId("snap"),
         createdAt: new Date().toISOString(),
         addedImageIds: [...(existing.addedImageIds || []), ...addedImageIds]
+      };
+      db.batchSnapshots[existingSnapshotIdx] = snapshot;
+    } else if (existingSnapshotIdx >= 0 && batch.status === "partially_rolled_back") {
+      const existing = db.batchSnapshots[existingSnapshotIdx];
+      const rolledBackSet = new Set(batch.rolledBackDamageIds || []);
+      const mergedDamagesBefore = {};
+      batch.damageIds.forEach((did) => {
+        if (rolledBackSet.has(did)) {
+          mergedDamagesBefore[did] = batchDamageSnapshots[did];
+        } else {
+          mergedDamagesBefore[did] = (existing.damagesBefore && existing.damagesBefore[did])
+            ? existing.damagesBefore[did]
+            : batchDamageSnapshots[did];
+        }
+      });
+      const survivedImageIds = (existing.addedImageIds || []).filter(
+        (id) => !(existing.removedImageIds || []).includes(id)
+      );
+      snapshot = {
+        id: makeId("snap"),
+        batchId: batch.id,
+        createdAt: new Date().toISOString(),
+        batchBefore: existing.batchBefore || JSON.parse(JSON.stringify(batch)),
+        damagesBefore: mergedDamagesBefore,
+        addedImageIds: [...survivedImageIds, ...addedImageIds],
+        removedImageIds: []
       };
       db.batchSnapshots[existingSnapshotIdx] = snapshot;
     } else {
@@ -1637,7 +1673,8 @@ async function handle(req, res) {
         createdAt: new Date().toISOString(),
         batchBefore: JSON.parse(JSON.stringify(batch)),
         damagesBefore: batchDamageSnapshots,
-        addedImageIds
+        addedImageIds,
+        removedImageIds: []
       };
       db.batchSnapshots.push(snapshot);
     }
@@ -1645,6 +1682,7 @@ async function handle(req, res) {
     batch.status = "completed";
     batch.completedAt = new Date().toISOString();
     batch.note = body.note ?? batch.note;
+    batch.rolledBackDamageIds = [];
     db.damages.forEach((damage) => {
       if (!batch.damageIds.includes(damage.id)) return;
       const result = results.find((item) => item.damageId === damage.id) || {};
@@ -1674,6 +1712,17 @@ async function handle(req, res) {
     const batch = db.batches.find((item) => item.id === batchId);
     if (!batch) return send(res, 404, { error: "修补批次不存在" });
 
+    const body = await parseBody(req);
+    const requestedDamageIds = Array.isArray(body.damageIds) && body.damageIds.length > 0 ? body.damageIds : null;
+    const isPartialRollback = requestedDamageIds !== null;
+
+    if (batch.status !== "completed" && batch.status !== "partially_rolled_back") {
+      return send(res, 400, {
+        error: `批次当前状态为「${getStatusText(batch.status)}」，只能回滚已完成或部分已回滚的批次`,
+        code: "INVALID_BATCH_STATUS_FOR_ROLLBACK"
+      });
+    }
+
     const snapshot = db.batchSnapshots.find((s) => s.batchId === batchId);
     if (!snapshot) {
       return send(res, 400, {
@@ -1683,23 +1732,126 @@ async function handle(req, res) {
       });
     }
 
-    const batchCompletedAt = batch.completedAt ? new Date(batch.completedAt) : null;
-    const referencedBy = [];
-    db.batches.forEach((other) => {
-      if (other.id === batchId) return;
-      const otherCompletedAt = other.completedAt ? new Date(other.completedAt) : null;
-      if (!otherCompletedAt || !batchCompletedAt) return;
-      if (otherCompletedAt <= batchCompletedAt) return;
-      const overlap = other.damageIds.filter((did) => batch.damageIds.includes(did));
-      if (overlap.length > 0) {
-        referencedBy.push({
-          batchId: other.id,
-          batchName: other.name,
-          completedAt: other.completedAt,
-          overlappingDamageIds: overlap
+    function checkReferenceConflicts(damageIdsToCheck) {
+      const batchCompletedAt = batch.completedAt ? new Date(batch.completedAt) : null;
+      const refs = [];
+      db.batches.forEach((other) => {
+        if (other.id === batchId) return;
+        const otherCompletedAt = other.completedAt ? new Date(other.completedAt) : null;
+        if (!otherCompletedAt || !batchCompletedAt) return;
+        if (otherCompletedAt <= batchCompletedAt) return;
+        const overlap = other.damageIds.filter((did) => damageIdsToCheck.includes(did));
+        if (overlap.length > 0) {
+          refs.push({
+            batchId: other.id,
+            batchName: other.name,
+            completedAt: other.completedAt,
+            overlappingDamageIds: overlap
+          });
+        }
+      });
+      return refs;
+    }
+
+    if (isPartialRollback) {
+      const batchDamageIdSet = new Set(batch.damageIds);
+      const notInBatch = requestedDamageIds.filter((id) => !batchDamageIdSet.has(id));
+      if (notInBatch.length > 0) {
+        return send(res, 400, {
+          error: `以下缺损项不属于当前批次：${notInBatch.join(", ")}`,
+          code: "DAMAGE_NOT_IN_BATCH"
         });
       }
-    });
+
+      const alreadyRolledBack = new Set(batch.rolledBackDamageIds || []);
+      const alreadyRolled = requestedDamageIds.filter((id) => alreadyRolledBack.has(id));
+      if (alreadyRolled.length > 0) {
+        return send(res, 400, {
+          error: `以下缺损项已回滚，不能重复回滚：${alreadyRolled.join(", ")}`,
+          code: "ALREADY_ROLLED_BACK"
+        });
+      }
+
+      const referencedBy = checkReferenceConflicts(requestedDamageIds);
+      if (referencedBy.length > 0) {
+        const details = referencedBy
+          .map((r) => `批次「${r.batchName}」(${r.batchId}，完成于 ${r.completedAt}) 引用了缺损项: ${r.overlappingDamageIds.join(", ")}`)
+          .join("；");
+        return send(res, 409, {
+          error: `无法部分回滚批次 ${batch.name}：指定的缺损项仍被 ${referencedBy.length} 个后续完成的批次引用。${details}`,
+          code: "DAMAGE_REFERENCED_BY_LATER_BATCH",
+          referencedBy
+        });
+      }
+
+      const oldValues = JSON.parse(JSON.stringify(batch));
+
+      requestedDamageIds.forEach((did) => {
+        const savedDamage = snapshot.damagesBefore[did];
+        const damage = db.damages.find((d) => d.id === did);
+        if (damage && savedDamage) {
+          Object.assign(damage, {
+            status: savedDamage.status,
+            afterPhotoUrl: savedDamage.afterPhotoUrl,
+            repairNote: savedDamage.repairNote,
+            repairedAt: savedDamage.repairedAt
+          });
+        }
+      });
+
+      const alreadyRemovedIds = new Set(snapshot.removedImageIds || []);
+      const remainingImageIds = (snapshot.addedImageIds || []).filter((id) => !alreadyRemovedIds.has(id));
+      const remainingImageIdSet = new Set(remainingImageIds);
+      const imagesToRemove = remainingImageIds.filter((imgId) => {
+        const img = db.repairImages.find((i) => i.id === imgId);
+        return img && requestedDamageIds.includes(img.damageId);
+      });
+      if (imagesToRemove.length > 0) {
+        const removeSet = new Set(imagesToRemove);
+        db.repairImages = db.repairImages.filter((img) => !removeSet.has(img.id));
+      }
+      snapshot.removedImageIds = [...(snapshot.removedImageIds || []), ...imagesToRemove];
+
+      batch.rolledBackDamageIds = [...(batch.rolledBackDamageIds || []), ...requestedDamageIds];
+
+      const allRolledBack = batch.rolledBackDamageIds.length >= batch.damageIds.length;
+      if (allRolledBack) {
+        Object.assign(batch, {
+          status: "open",
+          completedAt: null,
+          note: snapshot.batchBefore ? (snapshot.batchBefore.note ?? batch.note) : batch.note
+        });
+        batch.rolledBackDamageIds = [];
+        db.batchSnapshots = db.batchSnapshots.filter((s) => s.batchId !== batchId);
+      } else {
+        batch.status = "partially_rolled_back";
+      }
+
+      await writeDb(db);
+      const enrichedBatch = enrichBatch(db, batch);
+      return executeWithAudit({
+        actionType: AUDIT_ACTION_TYPES.PARTIAL_ROLLBACK_BATCH,
+        targetType: "batch",
+        targetId: batch.id,
+        oldValues,
+        newValues: { ...batch },
+        extra: {
+          rolledBackDamageIds: requestedDamageIds,
+          rolledBackCount: requestedDamageIds.length,
+          removedImageCount: imagesToRemove.length
+        },
+        businessResult: {
+          data: enrichedBatch,
+          rolledBackDamageCount: requestedDamageIds.length,
+          removedImageCount: imagesToRemove.length,
+          batchStatus: batch.status
+        },
+        statusCode: 200,
+        res
+      });
+    }
+
+    const referencedBy = checkReferenceConflicts(batch.damageIds);
     if (referencedBy.length > 0) {
       const details = referencedBy
         .map((r) => `批次「${r.batchName}」(${r.batchId}，完成于 ${r.completedAt}) 引用了缺损项: ${r.overlappingDamageIds.join(", ")}`)
@@ -1712,17 +1864,18 @@ async function handle(req, res) {
     }
 
     const oldValues = JSON.parse(JSON.stringify(batch));
-    const batchBefore = snapshot.batchBefore;
+    const alreadyRolledBackSet = new Set(batch.rolledBackDamageIds || []);
+    const damagesToRollBack = batch.damageIds.filter((did) => !alreadyRolledBackSet.has(did));
+
     Object.assign(batch, {
-      status: batchBefore.status,
-      completedAt: batchBefore.completedAt,
-      note: batchBefore.note ?? batch.note
+      status: "open",
+      completedAt: null
     });
 
-    Object.keys(snapshot.damagesBefore).forEach((did) => {
+    damagesToRollBack.forEach((did) => {
       const savedDamage = snapshot.damagesBefore[did];
       const damage = db.damages.find((d) => d.id === did);
-      if (damage) {
+      if (damage && savedDamage) {
         Object.assign(damage, {
           status: savedDamage.status,
           afterPhotoUrl: savedDamage.afterPhotoUrl,
@@ -1732,11 +1885,14 @@ async function handle(req, res) {
       }
     });
 
-    if (snapshot.addedImageIds && snapshot.addedImageIds.length > 0) {
-      const addedSet = new Set(snapshot.addedImageIds);
-      db.repairImages = db.repairImages.filter((img) => !addedSet.has(img.id));
+    const alreadyRemoved = new Set(snapshot.removedImageIds || []);
+    const imagesToRemove = (snapshot.addedImageIds || []).filter((id) => !alreadyRemoved.has(id));
+    if (imagesToRemove.length > 0) {
+      const removeSet = new Set(imagesToRemove);
+      db.repairImages = db.repairImages.filter((img) => !removeSet.has(img.id));
     }
 
+    batch.rolledBackDamageIds = [];
     db.batchSnapshots = db.batchSnapshots.filter((s) => s.batchId !== batchId);
 
     await writeDb(db);
@@ -1749,8 +1905,8 @@ async function handle(req, res) {
       newValues: { ...batch },
       businessResult: {
         data: enrichedBatch,
-        restoredDamageCount: Object.keys(snapshot.damagesBefore).length,
-        removedImageCount: snapshot.addedImageIds ? snapshot.addedImageIds.length : 0
+        restoredDamageCount: batch.damageIds.length,
+        removedImageCount: imagesToRemove.length
       },
       statusCode: 200,
       res
