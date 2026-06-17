@@ -1021,9 +1021,9 @@ function exportRepairResultsCsv(db, filters = {}) {
     const rubbing = rubbingMap.get(damage.rubbingId) || {};
     const batch = damage.batchId ? batchMap.get(damage.batchId) : null;
     const images = imagesMap.get(damage.id) || { before_repair: [], during_repair: [], after_repair: [] };
-    const primaryBefore = images.before_repair.find((img) => img.isPrimary) || images.before_repair[0];
-    const primaryDuring = images.during_repair.find((img) => img.isPrimary) || images.during_repair[0];
-    const primaryAfter = images.after_repair.find((img) => img.isPrimary) || images.after_repair[0];
+    const primaryBefore = images.before_repair.find((img) => img.isPrimary);
+    const primaryDuring = images.during_repair.find((img) => img.isPrimary);
+    const primaryAfter = images.after_repair.find((img) => img.isPrimary);
     return {
       id: damage.id,
       rubbingCode: rubbing.code || "",

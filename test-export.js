@@ -310,9 +310,85 @@ async function runTests() {
   const d3BeforeIdx = resultsParsed.headers.indexOf("修补前影像数");
   const d3DuringIdx = resultsParsed.headers.indexOf("修补中影像数");
   const d3AfterIdx = resultsParsed.headers.indexOf("修补后影像数");
+  const d3PrimaryBeforeIdx = resultsParsed.headers.indexOf("修补前主图URL");
+  const d3PrimaryDuringIdx = resultsParsed.headers.indexOf("修补中主图URL");
+  const d3PrimaryAfterIdx = resultsParsed.headers.indexOf("修补后主图URL");
   assert(d3Row && d3Row[d3BeforeIdx] === "1", "d3修补前影像数为1");
   assert(d3Row && d3Row[d3DuringIdx] === "1", "d3修补中影像数为1");
   assert(d3Row && d3Row[d3AfterIdx] === "1", "d3修补后影像数为1");
+  assert(d3Row && d3Row[d3PrimaryBeforeIdx] === "", "d3未标记主图时修补前主图URL为空");
+  assert(d3Row && d3Row[d3PrimaryDuringIdx] === "", "d3未标记主图时修补中主图URL为空");
+  assert(d3Row && d3Row[d3PrimaryAfterIdx] === "", "d3未标记主图时修补后主图URL为空");
+
+  await stopServer();
+
+  console.log("\n【场景5-1】修补结果CSV导出——标记主图时正确导出主图URL");
+  writeDb({
+    rubbings: [
+      { id: "r1", code: "TP-清-014", source: "清代拓片", paperSize: "42x68cm", note: "", createdAt: "2026-01-01T00:00:00.000Z" }
+    ],
+    damages: [
+      { id: "d_primary", rubbingId: "r1", position: "中央", type: "虫蛀", beforePhotoUrl: "x.jpg", afterPhotoUrl: "a.jpg", status: "repaired", repairNote: "修补完成", batchId: "b_p", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: "2026-06-15T00:00:00.000Z", reviewStatus: "approved", rejectReason: "" }
+    ],
+    batches: [
+      { id: "b_p", name: "测试批次", status: "completed", damageIds: ["d_primary"], note: "", createdAt: "2026-06-01T00:00:00.000Z", completedAt: "2026-06-15T00:00:00.000Z", plannedStartAt: null, plannedEndAt: null, responsible: null }
+    ],
+    repairImages: [
+      { id: "img_pb1", damageId: "d_primary", stage: "before_repair", url: "https://example.com/pb-nonprimary.jpg", isPrimary: false, capturedAt: "2026-06-10T00:00:00.000Z", description: "", collector: "", createdAt: "2026-06-10T00:00:00.000Z" },
+      { id: "img_pb2", damageId: "d_primary", stage: "before_repair", url: "https://example.com/pb-primary.jpg", isPrimary: true, capturedAt: "2026-06-10T00:01:00.000Z", description: "", collector: "", createdAt: "2026-06-10T00:01:00.000Z" },
+      { id: "img_pd", damageId: "d_primary", stage: "during_repair", url: "https://example.com/pd-primary.jpg", isPrimary: true, capturedAt: "2026-06-12T00:00:00.000Z", description: "", collector: "", createdAt: "2026-06-12T00:00:00.000Z" },
+      { id: "img_pa1", damageId: "d_primary", stage: "after_repair", url: "https://example.com/pa-nonprimary.jpg", isPrimary: false, capturedAt: "2026-06-14T00:00:00.000Z", description: "", collector: "", createdAt: "2026-06-14T00:00:00.000Z" },
+      { id: "img_pa2", damageId: "d_primary", stage: "after_repair", url: "https://example.com/pa-primary.jpg", isPrimary: true, capturedAt: "2026-06-14T00:01:00.000Z", description: "", collector: "", createdAt: "2026-06-14T00:01:00.000Z" }
+    ]
+  });
+  await startServer();
+
+  const primaryRes = await httpRequestCsv("GET", "/export/repair-results");
+  assertEqual(primaryRes.status, 200, "带主图的修补结果导出返回 200");
+  const primaryParsed = parseCsv(primaryRes.body);
+  const pRow = primaryParsed.rows.find((row) => row.includes("d_primary"));
+  const pPrimaryBeforeIdx = primaryParsed.headers.indexOf("修补前主图URL");
+  const pPrimaryDuringIdx = primaryParsed.headers.indexOf("修补中主图URL");
+  const pPrimaryAfterIdx = primaryParsed.headers.indexOf("修补后主图URL");
+  assert(pRow && pRow[pPrimaryBeforeIdx] === "https://example.com/pb-primary.jpg", "正确导出修补前主图URL（isPrimary=true）");
+  assert(pRow && pRow[pPrimaryDuringIdx] === "https://example.com/pd-primary.jpg", "正确导出修补中主图URL（isPrimary=true）");
+  assert(pRow && pRow[pPrimaryAfterIdx] === "https://example.com/pa-primary.jpg", "正确导出修补后主图URL（isPrimary=true）");
+
+  await stopServer();
+
+  console.log("\n【场景5-2】修补结果CSV导出——仅有非主图时主图URL为空，不回退到第一张");
+  writeDb({
+    rubbings: [
+      { id: "r1", code: "TP-清-015", source: "清代拓片", paperSize: "42x68cm", note: "", createdAt: "2026-01-01T00:00:00.000Z" }
+    ],
+    damages: [
+      { id: "d_noprimary", rubbingId: "r1", position: "中央", type: "虫蛀", beforePhotoUrl: "x.jpg", afterPhotoUrl: "a.jpg", status: "repaired", repairNote: "修补完成", batchId: "b_np", createdAt: "2026-01-01T00:00:00.000Z", repairedAt: "2026-06-15T00:00:00.000Z", reviewStatus: "approved", rejectReason: "" }
+    ],
+    batches: [
+      { id: "b_np", name: "测试批次", status: "completed", damageIds: ["d_noprimary"], note: "", createdAt: "2026-06-01T00:00:00.000Z", completedAt: "2026-06-15T00:00:00.000Z", plannedStartAt: null, plannedEndAt: null, responsible: null }
+    ],
+    repairImages: [
+      { id: "img_np1", damageId: "d_noprimary", stage: "before_repair", url: "https://example.com/np-before1.jpg", isPrimary: false, capturedAt: "2026-06-10T00:00:00.000Z", description: "", collector: "", createdAt: "2026-06-10T00:00:00.000Z" },
+      { id: "img_np2", damageId: "d_noprimary", stage: "before_repair", url: "https://example.com/np-before2.jpg", capturedAt: "2026-06-10T00:01:00.000Z", description: "", collector: "", createdAt: "2026-06-10T00:01:00.000Z" },
+      { id: "img_np3", damageId: "d_noprimary", stage: "after_repair", url: "https://example.com/np-after.jpg", capturedAt: "2026-06-14T00:00:00.000Z", description: "", collector: "", createdAt: "2026-06-14T00:00:00.000Z" }
+    ]
+  });
+  await startServer();
+
+  const noPrimaryRes = await httpRequestCsv("GET", "/export/repair-results");
+  assertEqual(noPrimaryRes.status, 200, "无主图的修补结果导出返回 200");
+  const noPrimaryParsed = parseCsv(noPrimaryRes.body);
+  const npRow = noPrimaryParsed.rows.find((row) => row.includes("d_noprimary"));
+  const npBeforeIdx = noPrimaryParsed.headers.indexOf("修补前影像数");
+  const npAfterIdx = noPrimaryParsed.headers.indexOf("修补后影像数");
+  const npPrimaryBeforeIdx = noPrimaryParsed.headers.indexOf("修补前主图URL");
+  const npPrimaryDuringIdx = noPrimaryParsed.headers.indexOf("修补中主图URL");
+  const npPrimaryAfterIdx = noPrimaryParsed.headers.indexOf("修补后主图URL");
+  assert(npRow && npRow[npBeforeIdx] === "2", "修补前影像数为2");
+  assert(npRow && npRow[npAfterIdx] === "1", "修补后影像数为1");
+  assert(npRow && npRow[npPrimaryBeforeIdx] === "", "无主图时修补前主图URL为空，不回退到第一张");
+  assert(npRow && npRow[npPrimaryDuringIdx] === "", "无影像时修补中主图URL为空");
+  assert(npRow && npRow[npPrimaryAfterIdx] === "", "无主图时修补后主图URL为空，不回退到第一张");
 
   await stopServer();
 
