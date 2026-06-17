@@ -2,11 +2,11 @@
   "schemaVersion": 2,
   "meta": {
     "createdAt": "2026-06-17T09:48:00.642Z",
-    "lastModifiedAt": "2026-06-17T10:26:23.156Z",
+    "lastModifiedAt": "2026-06-17T10:03:43.344Z",
     "migrationHistory": [],
     "dataStatistics": {
-      "rubbings": 6,
-      "damages": 9,
+      "rubbings": 5,
+      "damages": 8,
       "batches": 2,
       "repairImages": 5,
       "batchSnapshots": 0
@@ -53,14 +53,6 @@
         "paperSize": "50x80cm",
         "note": "",
         "createdAt": "2026-06-17T10:03:43.330Z"
-      },
-      {
-        "id": "rubbing_mqhxekog_di6pyd",
-        "code": "TP-宋-287",
-        "source": "西安碑林馆藏",
-        "paperSize": "60x90cm",
-        "note": "",
-        "createdAt": "2026-06-17T10:26:23.152Z"
       }
     ],
     "damages": [
@@ -186,23 +178,6 @@
         "reviewedBy": null,
         "reviewedAt": null,
         "createdAt": "2026-06-17T10:03:43.332Z",
-        "repairedAt": null
-      },
-      {
-        "id": "damage_mqhxekog_v4you9",
-        "rubbingId": "rubbing_mqhxekog_di6pyd",
-        "position": "右边缘中部",
-        "type": "折裂",
-        "beforePhotoUrl": "https://example.local/before-287-1.jpg",
-        "afterPhotoUrl": "",
-        "status": "pending",
-        "repairNote": "",
-        "batchId": null,
-        "reviewStatus": "review_pending",
-        "rejectReason": "",
-        "reviewedBy": null,
-        "reviewedAt": null,
-        "createdAt": "2026-06-17T10:26:23.152Z",
         "repairedAt": null
       }
     ],

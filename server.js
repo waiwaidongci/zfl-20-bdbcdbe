@@ -551,34 +551,58 @@ function normalizeReviewStatus(status) {
   return VALID_REVIEW_STATUSES.includes(status) ? status : "review_pending";
 }
 
-function createPrecheckToken() {
+function stableStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function getImportPayloadSignature(body) {
+  return stableStringify({
+    rubbings: Array.isArray(body.rubbings) ? body.rubbings : [],
+    damages: Array.isArray(body.damages) ? body.damages : []
+  });
+}
+
+function createPrecheckToken(body) {
   const token = makeId("precheck");
   const expiresAt = Date.now() + PRECHECK_TOKEN_TTL;
-  precheckTokenStore.set(token, expiresAt);
+  precheckTokenStore.set(token, {
+    expiresAt,
+    payloadSignature: getImportPayloadSignature(body)
+  });
   return token;
 }
 
-function validatePrecheckToken(token) {
+function validatePrecheckToken(token, body) {
   if (!token) return false;
-  const expiresAt = precheckTokenStore.get(token);
-  if (!expiresAt) return false;
-  if (Date.now() > expiresAt) {
+  const entry = precheckTokenStore.get(token);
+  if (!entry) return false;
+  if (Date.now() > entry.expiresAt) {
     precheckTokenStore.delete(token);
     return false;
   }
+  if (entry.payloadSignature !== getImportPayloadSignature(body)) return false;
   return true;
 }
 
-function consumePrecheckToken(token) {
-  if (!validatePrecheckToken(token)) return false;
+function consumePrecheckToken(token, body) {
+  if (!validatePrecheckToken(token, body)) return false;
   precheckTokenStore.delete(token);
   return true;
 }
 
 setInterval(() => {
   const now = Date.now();
-  for (const [token, expiresAt] of precheckTokenStore) {
-    if (now > expiresAt) precheckTokenStore.delete(token);
+  for (const [token, entry] of precheckTokenStore) {
+    if (now > entry.expiresAt) precheckTokenStore.delete(token);
   }
 }, 60 * 1000);
 
@@ -1821,7 +1845,7 @@ async function handle(req, res) {
   if (req.method === "POST" && pathname === "/import/precheck") {
     const body = await parseBody(req);
     const result = validateImportSubmission(body, db);
-    const precheckToken = createPrecheckToken();
+    const precheckToken = createPrecheckToken(body);
     return send(res, 200, {
       precheckToken,
       precheckTokenExpiresAt: Date.now() + PRECHECK_TOKEN_TTL,
@@ -1835,11 +1859,11 @@ async function handle(req, res) {
   if (req.method === "POST" && pathname === "/import/confirm") {
     const body = await parseBody(req);
 
-    const tokenValid = consumePrecheckToken(body.precheckToken);
+    const tokenValid = consumePrecheckToken(body.precheckToken, body);
     if (!tokenValid) {
       return send(res, 400, {
-        error: "导入确认失败：缺少或无效的预检令牌。请先调用 /import/precheck 进行预检，并在确认时返回有效的 precheckToken。",
-        code: "MISSING_OR_INVALID_PRECHECK_TOKEN"
+        error: "导入确认失败：缺少、无效或与当前导入内容不匹配的预检令牌。请先调用 /import/precheck 进行预检，并在确认时返回同一导入内容对应的有效 precheckToken。",
+        code: "MISSING_INVALID_OR_MISMATCHED_PRECHECK_TOKEN"
       });
     }
 
