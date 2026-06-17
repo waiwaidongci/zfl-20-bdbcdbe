@@ -146,6 +146,15 @@ function groupImagesByStage(images) {
   return grouped;
 }
 
+function isValidImageUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function validateImageEntry(entry, index) {
   const errors = [];
   if (!entry.stage || !VALID_STAGES.includes(entry.stage)) {
@@ -153,6 +162,8 @@ function validateImageEntry(entry, index) {
   }
   if (!entry.url || typeof entry.url !== "string" || entry.url.trim() === "") {
     errors.push(`第${index + 1}张图片URL不能为空`);
+  } else if (!isValidImageUrl(entry.url.trim())) {
+    errors.push(`第${index + 1}张图片URL格式无效，必须是有效的 http 或 https 链接`);
   }
   return errors;
 }

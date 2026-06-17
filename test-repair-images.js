@@ -249,7 +249,21 @@ async function runTests() {
 
   await stopServer();
 
-  console.log("\n【场景6】缺损归属校验——不存在的缺损项");
+  console.log("\n【场景6】影像URL校验——非法URL格式");
+  seedDb();
+  await startServer();
+
+  const invalidUrlRes = await httpRequest("POST", "/damages/d1/images", {
+    stage: "before_repair",
+    url: "not-a-url",
+    description: "测试"
+  });
+  assertEqual(invalidUrlRes.status, 400, "非法URL返回 400");
+  assert(invalidUrlRes.body.error.includes("URL格式无效"), "错误信息包含URL格式无效提示");
+
+  await stopServer();
+
+  console.log("\n【场景7】缺损归属校验——不存在的缺损项");
   seedDb();
   await startServer();
 
@@ -264,7 +278,7 @@ async function runTests() {
 
   await stopServer();
 
-  console.log("\n【场景7】完成批次时批量写入归档影像");
+  console.log("\n【场景8】完成批次时批量写入归档影像");
   seedDb();
   await startServer();
 
@@ -298,7 +312,7 @@ async function runTests() {
 
   await stopServer();
 
-  console.log("\n【场景8】完成批次时归属校验——影像归属不属于当前批次的缺损项");
+  console.log("\n【场景9】完成批次时归属校验——影像归属不属于当前批次的缺损项");
   seedDb();
   writeDb({
     rubbings: [
@@ -327,23 +341,25 @@ async function runTests() {
 
   await stopServer();
 
-  console.log("\n【场景9】完成批次时影像阶段和URL校验");
+  console.log("\n【场景10】完成批次时影像阶段和URL校验");
   seedDb();
   await startServer();
 
   const stageUrlRes = await httpRequest("POST", "/batches/b1/complete", {
     archiveImages: [
       { damageId: "d1", stage: "bad_stage", url: "https://example.local/x.jpg" },
-      { damageId: "d2", stage: "after_repair", url: "" }
+      { damageId: "d2", stage: "after_repair", url: "" },
+      { damageId: "d2", stage: "before_repair", url: "not-a-url" }
     ]
   });
   assertEqual(stageUrlRes.status, 400, "批次完成时影像校验失败返回 400");
   assert(stageUrlRes.body.error.includes("阶段无效"), "错误信息包含阶段无效");
   assert(stageUrlRes.body.error.includes("URL不能为空"), "错误信息包含URL不能为空");
+  assert(stageUrlRes.body.error.includes("URL格式无效"), "错误信息包含URL格式无效");
 
   await stopServer();
 
-  console.log("\n【场景10】PATCH缺损项详情返回按阶段分组的影像");
+  console.log("\n【场景11】PATCH缺损项详情返回按阶段分组的影像");
   seedDb();
   writeDb({
     rubbings: [
@@ -370,7 +386,7 @@ async function runTests() {
 
   await stopServer();
 
-  console.log("\n【场景11】空影像列表查询");
+  console.log("\n【场景12】空影像列表查询");
   seedDb();
   await startServer();
 
@@ -383,7 +399,7 @@ async function runTests() {
 
   await stopServer();
 
-  console.log("\n【场景12】完成批次时不传 archiveImages 仍然正常");
+  console.log("\n【场景13】完成批次时不传 archiveImages 仍然正常");
   seedDb();
   await startServer();
 
@@ -399,7 +415,7 @@ async function runTests() {
 
   await stopServer();
 
-  console.log("\n【场景13】health 接口包含新路由");
+  console.log("\n【场景14】health 接口包含新路由");
   seedDb();
   await startServer();
 
@@ -409,7 +425,7 @@ async function runTests() {
 
   await stopServer();
 
-  console.log("\n【场景14】批量登记时空数组校验");
+  console.log("\n【场景15】批量登记时空数组校验");
   seedDb();
   await startServer();
 
