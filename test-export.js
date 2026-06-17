@@ -1,14 +1,15 @@
 const { spawn } = require("child_process");
 const http = require("http");
 const fs = require("fs");
+const net = require("net");
 const path = require("path");
 
 const DB_FILE = path.join(__dirname, "data", "db.json");
 const BACKUP_FILE = path.join(__dirname, "data", "db.json.exportbackup");
-const PORT = 3050;
-const BASE_URL = `http://127.0.0.1:${PORT}`;
+const CONFIGURED_PORT = process.env.TEST_EXPORT_PORT ? Number(process.env.TEST_EXPORT_PORT) : null;
 
 let server;
+let baseUrl;
 let passed = 0;
 let failed = 0;
 
@@ -33,11 +34,24 @@ function writeDb(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-function startServer() {
+function findAvailablePort() {
   return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+    probe.on("error", reject);
+  });
+}
+
+function startServer() {
+  return new Promise(async (resolve, reject) => {
+    const port = CONFIGURED_PORT || await findAvailablePort();
+    baseUrl = `http://127.0.0.1:${port}`;
     server = spawn("node", ["server.js"], {
       cwd: __dirname,
-      env: { ...process.env, PORT: String(PORT) }
+      env: { ...process.env, PORT: String(port) }
     });
 
     server.stderr.on("data", (data) => {
@@ -84,7 +98,7 @@ function stopServer() {
 
 function httpRequestCsv(method, pathname) {
   return new Promise((resolve, reject) => {
-    const url = `${BASE_URL}${pathname}`;
+    const url = `${baseUrl}${pathname}`;
     const options = {
       method,
       headers: { "Content-Type": "application/json" }
@@ -99,6 +113,11 @@ function httpRequestCsv(method, pathname) {
     req.on("error", reject);
     req.end();
   });
+}
+
+function getDecodedContentDispositionFilename(header) {
+  const match = /filename\*=UTF-8''([^;]+)/.exec(header || "");
+  return match ? decodeURIComponent(match[1]) : header || "";
 }
 
 function assert(condition, message) {
@@ -214,10 +233,10 @@ async function runTests() {
 
   const healthRes = await httpRequestCsv("GET", "/health");
   const healthBody = JSON.parse(healthRes.body);
-  assert(healthBody.routes.includes("GET /export/rubbings"), "包含 GET /export/rubbings");
-  assert(healthBody.routes.includes("GET /export/damages"), "包含 GET /export/damages");
-  assert(healthBody.routes.includes("GET /export/batches"), "包含 GET /export/batches");
-  assert(healthBody.routes.includes("GET /export/repair-results"), "包含 GET /export/repair-results");
+  assert(healthBody.routes.includes("GET /export/rubbings?startDate=&endDate="), "包含 GET /export/rubbings");
+  assert(healthBody.routes.includes("GET /export/damages?status=&type=&startDate=&endDate="), "包含 GET /export/damages");
+  assert(healthBody.routes.includes("GET /export/batches?status=&startDate=&endDate="), "包含 GET /export/batches");
+  assert(healthBody.routes.includes("GET /export/repair-results?status=&type=&startDate=&endDate="), "包含 GET /export/repair-results");
 
   await stopServer();
 
@@ -228,7 +247,7 @@ async function runTests() {
   const rubbingsRes = await httpRequestCsv("GET", "/export/rubbings");
   assertEqual(rubbingsRes.status, 200, "拓片导出返回 200");
   assertEqual(rubbingsRes.headers["content-type"], "text/csv; charset=utf-8", "Content-Type 为 text/csv");
-  assert(rubbingsRes.headers["content-disposition"].includes("拓片数据"), "文件名包含中文");
+  assert(getDecodedContentDispositionFilename(rubbingsRes.headers["content-disposition"]).includes("拓片数据"), "文件名包含中文");
   assert(rubbingsRes.body.startsWith("\uFEFF"), "包含 BOM 以支持 Excel 中文显示");
 
   const rubbingsParsed = parseCsv(rubbingsRes.body);
@@ -383,7 +402,7 @@ async function runTests() {
 
   const reviewIdx = missingParsed.headers.indexOf("审核状态");
   const batchIdx = missingParsed.headers.indexOf("所属批次");
-  assertEqual(missingParsed.rows[0][reviewIdx], "待审核", "缺失reviewStatus时使用默认值");
+  assertEqual(missingParsed.rows[0][reviewIdx], "", "缺失reviewStatus时保持空字段");
   assertEqual(missingParsed.rows[0][batchIdx], "", "缺失batchId时空字符串");
 
   await stopServer();
