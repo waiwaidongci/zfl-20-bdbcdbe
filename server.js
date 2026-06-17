@@ -1,9 +1,16 @@
 const http = require("http");
-const { readFile, writeFile, mkdir } = require("fs/promises");
+const { readFile, writeFile, mkdir, readdir, stat, unlink } = require("fs/promises");
 const path = require("path");
 
 const PORT = Number(process.env.PORT || 3020);
 const DB_FILE = path.join(__dirname, "data", "db.json");
+const BACKUP_DIR = path.join(__dirname, "data", "backups");
+
+const BACKUP_ERRORS = {
+  BACKUP_NOT_FOUND: "BACKUP_NOT_FOUND",
+  JSON_CORRUPTED: "JSON_CORRUPTED",
+  INVALID_STRUCTURE: "INVALID_STRUCTURE"
+};
 
 const initialData = {
   rubbings: [
@@ -76,7 +83,11 @@ const routes = [
   "GET /export/rubbings?startDate=&endDate=",
   "GET /export/damages?status=&type=&startDate=&endDate=",
   "GET /export/batches?status=&startDate=&endDate=",
-  "GET /export/repair-results?status=&type=&startDate=&endDate="
+  "GET /export/repair-results?status=&type=&startDate=&endDate=",
+  "GET /backups",
+  "POST /backups",
+  "GET /backups/:filename/validate",
+  "POST /backups/:filename/restore"
 ];
 
 async function ensureDb() {
@@ -97,6 +108,168 @@ async function readDb() {
 
 async function writeDb(data) {
   await writeFile(DB_FILE, JSON.stringify(data, null, 2));
+}
+
+async function ensureBackupDir() {
+  await mkdir(BACKUP_DIR, { recursive: true });
+}
+
+function formatBackupTimestamp(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function getBackupFilename(timestamp) {
+  return `backup_${timestamp}.json`;
+}
+
+function validateDataStructure(data) {
+  if (!data || typeof data !== "object") return false;
+  const requiredKeys = ["rubbings", "damages", "batches", "repairImages"];
+  for (const key of requiredKeys) {
+    if (!Array.isArray(data[key])) return false;
+  }
+  return true;
+}
+
+async function createBackup() {
+  await ensureBackupDir();
+  const dbContent = await readFile(DB_FILE, "utf8");
+  let parsedData;
+  try {
+    parsedData = JSON.parse(dbContent);
+  } catch {
+    const error = new Error("当前数据库JSON损坏，无法创建备份");
+    error.code = BACKUP_ERRORS.JSON_CORRUPTED;
+    error.status = 500;
+    throw error;
+  }
+  if (!validateDataStructure(parsedData)) {
+    const error = new Error("当前数据库结构不符合预期，无法创建备份");
+    error.code = BACKUP_ERRORS.INVALID_STRUCTURE;
+    error.status = 500;
+    throw error;
+  }
+  const timestamp = formatBackupTimestamp(new Date());
+  const filename = getBackupFilename(timestamp);
+  const backupPath = path.join(BACKUP_DIR, filename);
+  const backupData = {
+    meta: {
+      createdAt: new Date().toISOString(),
+      version: 1,
+      dataCounts: {
+        rubbings: parsedData.rubbings.length,
+        damages: parsedData.damages.length,
+        batches: parsedData.batches.length,
+        repairImages: parsedData.repairImages.length
+      }
+    },
+    data: parsedData
+  };
+  await writeFile(backupPath, JSON.stringify(backupData, null, 2));
+  const stats = await stat(backupPath);
+  return {
+    filename,
+    createdAt: backupData.meta.createdAt,
+    size: stats.size,
+    dataCounts: backupData.meta.dataCounts
+  };
+}
+
+async function listBackups() {
+  await ensureBackupDir();
+  const files = await readdir(BACKUP_DIR);
+  const backupFiles = files.filter((f) => f.startsWith("backup_") && f.endsWith(".json"));
+  const backups = [];
+  for (const filename of backupFiles) {
+    try {
+      const backupPath = path.join(BACKUP_DIR, filename);
+      const stats = await stat(backupPath);
+      const content = JSON.parse(await readFile(backupPath, "utf8"));
+      backups.push({
+        filename,
+        createdAt: content.meta?.createdAt || stats.mtime.toISOString(),
+        size: stats.size,
+        dataCounts: content.meta?.dataCounts || null
+      });
+    } catch {
+      continue;
+    }
+  }
+  backups.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return backups;
+}
+
+async function readBackupFile(filename) {
+  await ensureBackupDir();
+  const backupPath = path.join(BACKUP_DIR, filename);
+  let content;
+  try {
+    content = await readFile(backupPath, "utf8");
+  } catch {
+    const error = new Error(`备份文件不存在: ${filename}`);
+    error.code = BACKUP_ERRORS.BACKUP_NOT_FOUND;
+    error.status = 404;
+    throw error;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    const error = new Error("备份文件JSON损坏");
+    error.code = BACKUP_ERRORS.JSON_CORRUPTED;
+    error.status = 400;
+    throw error;
+  }
+  return parsed;
+}
+
+async function validateBackup(filename) {
+  const backup = await readBackupFile(filename);
+  if (!backup.data || !validateDataStructure(backup.data)) {
+    const error = new Error("备份数据结构不符合项目预期");
+    error.code = BACKUP_ERRORS.INVALID_STRUCTURE;
+    error.status = 400;
+    throw error;
+  }
+  const stats = await stat(path.join(BACKUP_DIR, filename));
+  return {
+    filename,
+    valid: true,
+    createdAt: backup.meta?.createdAt || stats.mtime.toISOString(),
+    dataCounts: backup.meta?.dataCounts || {
+      rubbings: backup.data.rubbings.length,
+      damages: backup.data.damages.length,
+      batches: backup.data.batches.length,
+      repairImages: backup.data.repairImages.length
+    },
+    size: stats.size
+  };
+}
+
+async function restoreFromBackup(filename) {
+  const validation = await validateBackup(filename);
+  const backup = await readBackupFile(filename);
+  const tempFile = path.join(BACKUP_DIR, `temp_restore_${Date.now()}.json`);
+  try {
+    await writeFile(tempFile, JSON.stringify(backup.data, null, 2));
+    const verifyData = JSON.parse(await readFile(tempFile, "utf8"));
+    if (!validateDataStructure(verifyData)) {
+      throw new Error("恢复前校验失败：数据结构无效");
+    }
+    await writeFile(DB_FILE, JSON.stringify(backup.data, null, 2));
+    return {
+      success: true,
+      restoredFrom: filename,
+      restoredAt: new Date().toISOString(),
+      dataCounts: validation.dataCounts
+    };
+  } finally {
+    try {
+      await unlink(tempFile);
+    } catch {
+    }
+  }
 }
 
 function send(res, status, body) {
@@ -1112,6 +1285,51 @@ async function handle(req, res) {
     const csv = exportRepairResultsCsv(db, { status, type, startDate, endDate });
     const filename = `修补结果数据_${new Date().toISOString().slice(0, 10)}.csv`;
     return sendCsv(res, filename, csv);
+  }
+
+  if (req.method === "GET" && pathname === "/backups") {
+    const backups = await listBackups();
+    return send(res, 200, { data: backups, total: backups.length });
+  }
+
+  if (req.method === "POST" && pathname === "/backups") {
+    try {
+      const backup = await createBackup();
+      return send(res, 201, { data: backup });
+    } catch (error) {
+      return send(res, error.status || 500, {
+        error: error.message,
+        code: error.code
+      });
+    }
+  }
+
+  const backupValidateMatch = pathname.match(/^\/backups\/([^/]+)\/validate$/);
+  if (backupValidateMatch && req.method === "GET") {
+    const filename = decodeURIComponent(backupValidateMatch[1]);
+    try {
+      const result = await validateBackup(filename);
+      return send(res, 200, { data: result });
+    } catch (error) {
+      return send(res, error.status || 500, {
+        error: error.message,
+        code: error.code
+      });
+    }
+  }
+
+  const backupRestoreMatch = pathname.match(/^\/backups\/([^/]+)\/restore$/);
+  if (backupRestoreMatch && req.method === "POST") {
+    const filename = decodeURIComponent(backupRestoreMatch[1]);
+    try {
+      const result = await restoreFromBackup(filename);
+      return send(res, 200, { data: result });
+    } catch (error) {
+      return send(res, error.status || 500, {
+        error: error.message,
+        code: error.code
+      });
+    }
   }
 
   return send(res, 404, { error: "接口不存在", routes });
