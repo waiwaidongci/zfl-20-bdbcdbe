@@ -170,5 +170,22 @@
       "note": "测试修复后写入",
       "createdAt": "2026-06-17T04:42:59.653Z"
     }
+  },
+  {
+    "id": "audit_mqhn7h6u_qp9xm2",
+    "timestamp": "2026-06-17T05:40:55.878Z",
+    "actionType": "create_rubbing",
+    "targetType": "rubbing",
+    "targetId": "rubbing_mqhn7h6r_56axje",
+    "changeSummary": "创建拓片：编号 VERIFY-001，来源 最终验证",
+    "oldValues": null,
+    "newValues": {
+      "id": "rubbing_mqhn7h6r_56axje",
+      "code": "VERIFY-001",
+      "source": "最终验证",
+      "paperSize": "10x10cm",
+      "note": "验证写入",
+      "createdAt": "2026-06-17T05:40:55.875Z"
+    }
   }
 ]

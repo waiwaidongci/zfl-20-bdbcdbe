@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const migrator = require("./data-migrator");
 
 const DB_FILE = path.join(__dirname, "data", "db.json");
 
@@ -59,17 +60,39 @@ function readDb() {
   if (!fs.existsSync(DB_FILE)) {
     return null;
   }
-  const raw = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+  } catch (parseErr) {
+    console.error(`[test-helper readDb] JSON 解析失败: ${parseErr.message}`);
+    return { rubbings: [], damages: [], batches: [], repairImages: [], batchSnapshots: [] };
+  }
   return flattenData(raw);
 }
 
 function writeDb(data) {
   ensureDataDir();
   const toWrite = isV2Structure(data) ? data : wrapInV2(data);
+  if (isV2Structure(toWrite)) {
+    const v2Errors = migrator.validateV2Structure(toWrite);
+    if (v2Errors.length > 0) {
+      throw new Error(`写入被阻断：v2 结构校验失败 - ${v2Errors.join("; ")}`);
+    }
+  }
   const tempFile = path.join(path.dirname(DB_FILE), `.db_test_${Date.now()}.json`);
   try {
     fs.writeFileSync(tempFile, JSON.stringify(toWrite, null, 2));
-    fs.renameSync(tempFile, DB_FILE);
+    JSON.parse(fs.readFileSync(tempFile, "utf8"));
+    try {
+      fs.renameSync(tempFile, DB_FILE);
+    } catch (renameErr) {
+      if (renameErr.code === "EXDEV" || renameErr.code === "EPERM") {
+        fs.copyFileSync(tempFile, DB_FILE);
+        fs.unlinkSync(tempFile);
+      } else {
+        throw renameErr;
+      }
+    }
   } catch (e) {
     try {
       fs.unlinkSync(tempFile);

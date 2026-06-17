@@ -336,9 +336,18 @@ async function testScenario5_ReferenceCheck() {
     defaultRepairNote: "批次B修补"
   });
 
-  const rawDb = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-  rawDb.batches.find((b) => b.id === "b_test2").damageIds.push("d_test1");
-  fs.writeFileSync(DB_FILE, JSON.stringify(rawDb, null, 2));
+  const rawDbRaw = fs.readFileSync(DB_FILE, "utf8");
+  const rawDb = JSON.parse(rawDbRaw);
+  const batches = rawDb.entities ? rawDb.entities.batches : rawDb.batches;
+  batches.find((b) => b.id === "b_test2").damageIds.push("d_test1");
+  if (rawDb.entities) {
+    rawDb.entities.batches = batches;
+  } else {
+    rawDb.batches = batches;
+  }
+  const tempFile = DB_FILE + ".tmp";
+  fs.writeFileSync(tempFile, JSON.stringify(rawDb, null, 2));
+  fs.renameSync(tempFile, DB_FILE);
 
   const rollbackBlocked = await httpRequest("POST", "/batches/b_test1/rollback", {});
   assertEqual(rollbackBlocked.status, 409, "被引用时回滚返回 409");
@@ -347,9 +356,18 @@ async function testScenario5_ReferenceCheck() {
   assertTrue(rollbackBlocked.body.referencedBy.length >= 1, "referencedBy 至少包含一个后续批次");
   assertContains(rollbackBlocked.body.error, "引用", "错误信息提到引用问题");
 
-  const rawDb2 = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-  rawDb2.batches.find((b) => b.id === "b_test2").damageIds = ["d_test3"];
-  fs.writeFileSync(DB_FILE, JSON.stringify(rawDb2, null, 2));
+  const rawDb2Raw = fs.readFileSync(DB_FILE, "utf8");
+  const rawDb2 = JSON.parse(rawDb2Raw);
+  const batches2 = rawDb2.entities ? rawDb2.entities.batches : rawDb2.batches;
+  batches2.find((b) => b.id === "b_test2").damageIds = ["d_test3"];
+  if (rawDb2.entities) {
+    rawDb2.entities.batches = batches2;
+  } else {
+    rawDb2.batches = batches2;
+  }
+  const tempFile2 = DB_FILE + ".tmp2";
+  fs.writeFileSync(tempFile2, JSON.stringify(rawDb2, null, 2));
+  fs.renameSync(tempFile2, DB_FILE);
 
   await sleep(30);
   const rollbackOk = await httpRequest("POST", "/batches/b_test2/rollback", {});

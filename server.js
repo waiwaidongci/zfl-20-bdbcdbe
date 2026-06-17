@@ -1,5 +1,5 @@
 const http = require("http");
-const { readFile, writeFile, mkdir, readdir, stat, unlink } = require("fs/promises");
+const { readFile, writeFile, mkdir, readdir, stat, unlink, rename, copyFile } = require("fs/promises");
 const path = require("path");
 const migrator = require("./data-migrator");
 
@@ -114,8 +114,17 @@ async function ensureDb() {
 }
 
 function unwrapDbData(raw) {
-  if (raw && typeof raw === "object" && typeof raw.schemaVersion === "number" && raw.entities) {
-    return raw.entities;
+  if (!raw || typeof raw !== "object") {
+    return { rubbings: [], damages: [], batches: [], repairImages: [], batchSnapshots: [] };
+  }
+  if (typeof raw.schemaVersion === "number" && raw.entities) {
+    return {
+      rubbings: raw.entities.rubbings || [],
+      damages: raw.entities.damages || [],
+      batches: raw.entities.batches || [],
+      repairImages: raw.entities.repairImages || [],
+      batchSnapshots: raw.entities.batchSnapshots || []
+    };
   }
   if (!raw.repairImages) raw.repairImages = [];
   if (!raw.batchSnapshots) raw.batchSnapshots = [];
@@ -124,7 +133,13 @@ function unwrapDbData(raw) {
 
 async function readDb() {
   await ensureDb();
-  const raw = JSON.parse(await readFile(DB_FILE, "utf8"));
+  let raw;
+  try {
+    raw = JSON.parse(await readFile(DB_FILE, "utf8"));
+  } catch (parseErr) {
+    console.error(`[readDb] JSON 解析失败，使用空数据: ${parseErr.message}`);
+    return { rubbings: [], damages: [], batches: [], repairImages: [], batchSnapshots: [] };
+  }
   return unwrapDbData(raw);
 }
 
@@ -135,6 +150,8 @@ async function writeDb(data) {
   } catch {
     raw = null;
   }
+
+  let toWrite;
   if (raw && typeof raw === "object" && typeof raw.schemaVersion === "number" && raw.entities) {
     raw.entities = {
       rubbings: data.rubbings || [],
@@ -151,9 +168,39 @@ async function writeDb(data) {
       repairImages: raw.entities.repairImages.length,
       batchSnapshots: raw.entities.batchSnapshots.length
     };
-    await writeFile(DB_FILE, JSON.stringify(raw, null, 2));
+    const v2Errors = migrator.validateV2Structure(raw);
+    if (v2Errors.length > 0) {
+      throw new Error(`写入被阻断：v2 结构校验失败 - ${v2Errors.join("; ")}`);
+    }
+    toWrite = raw;
   } else {
-    await writeFile(DB_FILE, JSON.stringify(data, null, 2));
+    if (!data || typeof data !== "object") {
+      throw new Error("写入被阻断：数据不是有效对象");
+    }
+    toWrite = data;
+  }
+
+  const tempFile = path.join(path.dirname(DB_FILE), `.db.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.json`);
+  try {
+    const jsonStr = JSON.stringify(toWrite, null, 2);
+    await writeFile(tempFile, jsonStr);
+    JSON.parse(await readFile(tempFile, "utf8"));
+    try {
+      await rename(tempFile, DB_FILE);
+    } catch (renameErr) {
+      if (renameErr.code === "EXDEV" || renameErr.code === "EPERM") {
+        await copyFile(tempFile, DB_FILE);
+        await unlink(tempFile);
+      } else {
+        throw renameErr;
+      }
+    }
+  } catch (e) {
+    try {
+      await unlink(tempFile);
+    } catch (_) {
+    }
+    throw e;
   }
 }
 
@@ -1725,19 +1772,24 @@ const server = http.createServer((req, res) => {
         startupWarning = "数据迁移严重失败，数据可能已损坏";
         break;
       case "V2_STRUCTURE_CORRUPTED":
-        console.warn(`[数据迁移] 警告: v2 结构校验失败，尝试以兼容模式启动`);
+        console.error(`[数据迁移] 错误: v2 结构校验失败，数据已损坏，拒绝启动`);
         if (migrationError.validationErrors) {
           migrationError.validationErrors.forEach((e, i) => {
-            console.warn(`  ${i + 1}. ${e}`);
+            console.error(`  ${i + 1}. ${e}`);
           });
         }
-        startupMode = "degraded";
-        startupWarning = "v2 结构损坏，运行于降级兼容模式";
+        startupMode = "fatal";
+        startupWarning = "v2 结构损坏，无法安全启动";
         break;
       case "INVALID_STRUCTURE":
-        console.error(`[数据迁移] 错误: 数据结构无法识别`);
-        startupMode = "invalid";
+        console.error(`[数据迁移] 错误: 数据结构无法识别，拒绝启动`);
+        startupMode = "fatal";
         startupWarning = "数据结构无法识别";
+        break;
+      case "JSON_CORRUPTED":
+        console.error(`[数据迁移] 错误: 数据库 JSON 损坏，拒绝启动`);
+        startupMode = "fatal";
+        startupWarning = "数据库文件 JSON 损坏";
         break;
       case "BACKUP_CREATION_FAILED":
         console.error(`[数据迁移] 警告: 备份创建失败，迁移已中止，将以原结构启动`);
