@@ -1,6 +1,7 @@
 const http = require("http");
 const { readFile, writeFile, mkdir, readdir, stat, unlink } = require("fs/promises");
 const path = require("path");
+const migrator = require("./data-migrator");
 
 const PORT = Number(process.env.PORT || 3020);
 const DB_FILE = path.join(__dirname, "data", "db.json");
@@ -112,16 +113,48 @@ async function ensureDb() {
   }
 }
 
+function unwrapDbData(raw) {
+  if (raw && typeof raw === "object" && typeof raw.schemaVersion === "number" && raw.entities) {
+    return raw.entities;
+  }
+  if (!raw.repairImages) raw.repairImages = [];
+  if (!raw.batchSnapshots) raw.batchSnapshots = [];
+  return raw;
+}
+
 async function readDb() {
   await ensureDb();
-  const data = JSON.parse(await readFile(DB_FILE, "utf8"));
-  if (!data.repairImages) data.repairImages = [];
-  if (!data.batchSnapshots) data.batchSnapshots = [];
-  return data;
+  const raw = JSON.parse(await readFile(DB_FILE, "utf8"));
+  return unwrapDbData(raw);
 }
 
 async function writeDb(data) {
-  await writeFile(DB_FILE, JSON.stringify(data, null, 2));
+  let raw;
+  try {
+    raw = JSON.parse(await readFile(DB_FILE, "utf8"));
+  } catch {
+    raw = null;
+  }
+  if (raw && typeof raw === "object" && typeof raw.schemaVersion === "number" && raw.entities) {
+    raw.entities = {
+      rubbings: data.rubbings || [],
+      damages: data.damages || [],
+      batches: data.batches || [],
+      repairImages: data.repairImages || [],
+      batchSnapshots: data.batchSnapshots || []
+    };
+    raw.meta.lastModifiedAt = new Date().toISOString();
+    raw.meta.dataStatistics = {
+      rubbings: raw.entities.rubbings.length,
+      damages: raw.entities.damages.length,
+      batches: raw.entities.batches.length,
+      repairImages: raw.entities.repairImages.length,
+      batchSnapshots: raw.entities.batchSnapshots.length
+    };
+    await writeFile(DB_FILE, JSON.stringify(raw, null, 2));
+  } else {
+    await writeFile(DB_FILE, JSON.stringify(data, null, 2));
+  }
 }
 
 async function ensureAuditLog() {
@@ -223,11 +256,37 @@ function getBackupFilename(timestamp) {
 
 function validateDataStructure(data) {
   if (!data || typeof data !== "object") return false;
+  if (typeof data.schemaVersion === "number" && data.entities) {
+    const requiredKeys = ["rubbings", "damages", "batches", "repairImages", "batchSnapshots"];
+    for (const key of requiredKeys) {
+      if (!Array.isArray(data.entities[key])) return false;
+    }
+    return true;
+  }
   const requiredKeys = ["rubbings", "damages", "batches", "repairImages", "batchSnapshots"];
   for (const key of requiredKeys) {
     if (!Array.isArray(data[key])) return false;
   }
   return true;
+}
+
+function getDataCounts(data) {
+  if (data && typeof data === "object" && typeof data.schemaVersion === "number" && data.entities) {
+    return {
+      rubbings: data.entities.rubbings.length,
+      damages: data.entities.damages.length,
+      batches: data.entities.batches.length,
+      repairImages: data.entities.repairImages.length,
+      batchSnapshots: data.entities.batchSnapshots.length
+    };
+  }
+  return {
+    rubbings: (data?.rubbings || []).length,
+    damages: (data?.damages || []).length,
+    batches: (data?.batches || []).length,
+    repairImages: (data?.repairImages || []).length,
+    batchSnapshots: (data?.batchSnapshots || []).length
+  };
 }
 
 function sanitizeBackupFilename(filename) {
@@ -275,16 +334,12 @@ async function createBackup() {
   const timestamp = formatBackupTimestamp(new Date());
   const filename = getBackupFilename(timestamp);
   const backupPath = path.join(BACKUP_DIR, filename);
+  const counts = getDataCounts(parsedData);
   const backupData = {
     meta: {
       createdAt: new Date().toISOString(),
-      version: 1,
-      dataCounts: {
-        rubbings: parsedData.rubbings.length,
-        damages: parsedData.damages.length,
-        batches: parsedData.batches.length,
-        repairImages: parsedData.repairImages.length
-      }
+      version: parsedData.schemaVersion || 0,
+      dataCounts: counts
     },
     data: parsedData
   };
@@ -360,12 +415,7 @@ async function validateBackup(filename) {
     filename,
     valid: true,
     createdAt: backup.meta?.createdAt || stats.mtime.toISOString(),
-    dataCounts: backup.meta?.dataCounts || {
-      rubbings: backup.data.rubbings.length,
-      damages: backup.data.damages.length,
-      batches: backup.data.batches.length,
-      repairImages: backup.data.repairImages.length
-    },
+    dataCounts: backup.meta?.dataCounts || getDataCounts(backup.data),
     size: stats.size
   };
 }
@@ -1639,6 +1689,41 @@ const server = http.createServer((req, res) => {
   handle(req, res).catch((error) => send(res, error.status || 500, { error: error.message || "服务器错误" }));
 });
 
-server.listen(PORT, () => {
-  console.log(`Rubbing repair API running at http://127.0.0.1:${PORT}`);
-});
+(async function bootstrap() {
+  try {
+    const migrationResult = await migrator.migrateToLatest();
+    if (migrationResult.action === "migrated") {
+      console.log(`[数据迁移] 成功: ${migrationResult.message}`);
+      console.log(`[数据迁移] 从版本 v${migrationResult.fromVersion} 升级到 v${migrationResult.toVersion}`);
+      if (migrationResult.backup) {
+        console.log(`[数据迁移] 备份文件: ${migrationResult.backup.filename}`);
+      }
+      if (migrationResult.conflicts && migrationResult.conflicts.length > 0) {
+        console.log(`[数据迁移] 潜在冲突警告 (${migrationResult.conflicts.length} 项):`);
+        migrationResult.conflicts.forEach((c, i) => {
+          console.log(`  ${i + 1}. [${c.level.toUpperCase()}] ${c.message}`);
+        });
+      }
+    } else if (migrationResult.action === "initialized") {
+      console.log(`[数据迁移] ${migrationResult.message}`);
+    } else {
+      console.log(`[数据迁移] ${migrationResult.message} (v${migrationResult.toVersion})`);
+    }
+    server.listen(PORT, () => {
+      console.log(`Rubbing repair API running at http://127.0.0.1:${PORT}`);
+    });
+  } catch (migrationError) {
+    console.error(`[数据迁移] 失败: ${migrationError.message}`);
+    if (migrationError.backupFile) {
+      console.error(`[数据迁移] 已生成备份文件: ${migrationError.backupFile}`);
+    }
+    if (migrationError.code === "MIGRATION_AND_ROLLBACK_FAILED") {
+      console.error(`[数据迁移] 严重错误: 迁移和回滚均失败，请从备份手动恢复！`);
+    } else {
+      console.error(`[数据迁移] 已回滚到原数据版本，服务器将正常启动但使用旧结构`);
+      server.listen(PORT, () => {
+        console.log(`Rubbing repair API running at http://127.0.0.1:${PORT} (迁移失败，使用旧数据结构)`);
+      });
+    }
+  }
+})();

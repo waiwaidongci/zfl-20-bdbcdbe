@@ -1,26 +1,19 @@
 {
-  "schemaVersion": 2,
   "meta": {
-    "createdAt": "2026-06-17T04:01:13.989Z",
-    "lastModifiedAt": "2026-06-17T04:06:35.786Z",
-    "migrationHistory": [
-      {
-        "fromVersion": 0,
-        "toVersion": 2,
-        "migratedAt": "2026-06-17T04:01:13.989Z",
-        "backupFile": "migration_backup_20260617_120113988_v0tov2_r6byv7.json",
-        "note": "经 v0 -> v1 升级"
-      }
-    ],
-    "dataStatistics": {
-      "rubbings": 5,
+    "type": "migration_backup",
+    "createdAt": "2026-06-17T04:01:13.988Z",
+    "fromVersion": 0,
+    "toVersion": 2,
+    "originalVersion": 0,
+    "dataCounts": {
+      "rubbings": 4,
       "damages": 7,
       "batches": 3,
       "repairImages": 5,
       "batchSnapshots": 0
     }
   },
-  "entities": {
+  "data": {
     "rubbings": [
       {
         "id": "r1",
@@ -53,14 +46,6 @@
         "paperSize": "30x40cm",
         "note": "测试拓片",
         "createdAt": "2026-06-17T02:58:13.418Z"
-      },
-      {
-        "id": "rubbing_mqhju5u2_6ns6fr",
-        "code": "TP-测试迁移-001",
-        "source": "迁移测试来源",
-        "paperSize": "50x70cm",
-        "note": "迁移后写入测试",
-        "createdAt": "2026-06-17T04:06:35.786Z"
       }
     ],
     "damages": [
@@ -270,13 +255,5 @@
       }
     ],
     "batchSnapshots": []
-  },
-  "imageArchive": {
-    "archivedImages": [],
-    "archiveStats": {
-      "totalArchived": 0,
-      "lastArchivedAt": null,
-      "storagePath": "./data/image-archive"
-    }
   }
 }
