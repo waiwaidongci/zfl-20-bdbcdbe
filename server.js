@@ -1,15 +1,17 @@
 const http = require("http");
-const { readFile, writeFile, mkdir, readdir, stat, unlink } = require("fs/promises");
+const { readFile, writeFile, mkdir } = require("fs/promises");
 const path = require("path");
 
 const PORT = Number(process.env.PORT || 3020);
 const DB_FILE = path.join(__dirname, "data", "db.json");
-const BACKUP_DIR = path.join(__dirname, "data", "backups");
+const AUDIT_LOG_FILE = path.join(__dirname, "data", "audit-logs.json");
 
-const BACKUP_ERRORS = {
-  BACKUP_NOT_FOUND: "BACKUP_NOT_FOUND",
-  JSON_CORRUPTED: "JSON_CORRUPTED",
-  INVALID_STRUCTURE: "INVALID_STRUCTURE"
+const AUDIT_ACTION_TYPES = {
+  CREATE_RUBBING: "create_rubbing",
+  REGISTER_DAMAGE: "register_damage",
+  UPDATE_DAMAGE: "update_damage",
+  CREATE_BATCH: "create_batch",
+  COMPLETE_BATCH: "complete_batch"
 };
 
 const initialData = {
@@ -84,10 +86,7 @@ const routes = [
   "GET /export/damages?status=&type=&startDate=&endDate=",
   "GET /export/batches?status=&startDate=&endDate=",
   "GET /export/repair-results?status=&type=&startDate=&endDate=",
-  "GET /backups",
-  "POST /backups",
-  "GET /backups/:filename/validate",
-  "POST /backups/:filename/restore"
+  "GET /audit-logs?actionType=&targetId="
 ];
 
 async function ensureDb() {
@@ -110,192 +109,85 @@ async function writeDb(data) {
   await writeFile(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-async function ensureBackupDir() {
-  await mkdir(BACKUP_DIR, { recursive: true });
-}
-
-function formatBackupTimestamp(date) {
-  const pad = (n, len = 2) => String(n).padStart(len, "0");
-  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}${pad(date.getMilliseconds(), 3)}`;
-}
-
-function getBackupFilename(timestamp) {
-  const suffix = Math.random().toString(36).slice(2, 8);
-  return `backup_${timestamp}_${suffix}.json`;
-}
-
-function validateDataStructure(data) {
-  if (!data || typeof data !== "object") return false;
-  const requiredKeys = ["rubbings", "damages", "batches", "repairImages"];
-  for (const key of requiredKeys) {
-    if (!Array.isArray(data[key])) return false;
-  }
-  return true;
-}
-
-function sanitizeBackupFilename(filename) {
-  if (!filename || typeof filename !== "string") {
-    const error = new Error("备份文件名无效");
-    error.code = BACKUP_ERRORS.BACKUP_NOT_FOUND;
-    error.status = 400;
-    throw error;
-  }
-  const SAFE_PATTERN = /^backup_\d{8}_\d{6,9}[_a-z0-9]*\.json$/;
-  if (!SAFE_PATTERN.test(filename)) {
-    const error = new Error("备份文件名格式无效，只允许字母数字和下划线");
-    error.code = BACKUP_ERRORS.BACKUP_NOT_FOUND;
-    error.status = 400;
-    throw error;
-  }
-  const resolved = path.resolve(BACKUP_DIR, filename);
-  if (!resolved.startsWith(path.resolve(BACKUP_DIR) + path.sep) && resolved !== path.resolve(BACKUP_DIR)) {
-    const error = new Error("备份文件路径越界");
-    error.code = BACKUP_ERRORS.BACKUP_NOT_FOUND;
-    error.status = 400;
-    throw error;
-  }
-  return filename;
-}
-
-async function createBackup() {
-  await ensureBackupDir();
-  const dbContent = await readFile(DB_FILE, "utf8");
-  let parsedData;
+async function ensureAuditLog() {
+  await mkdir(path.dirname(AUDIT_LOG_FILE), { recursive: true });
   try {
-    parsedData = JSON.parse(dbContent);
+    JSON.parse(await readFile(AUDIT_LOG_FILE, "utf8"));
   } catch {
-    const error = new Error("当前数据库JSON损坏，无法创建备份");
-    error.code = BACKUP_ERRORS.JSON_CORRUPTED;
-    error.status = 500;
-    throw error;
+    await writeFile(AUDIT_LOG_FILE, JSON.stringify([], null, 2));
   }
-  if (!validateDataStructure(parsedData)) {
-    const error = new Error("当前数据库结构不符合预期，无法创建备份");
-    error.code = BACKUP_ERRORS.INVALID_STRUCTURE;
-    error.status = 500;
-    throw error;
-  }
-  const timestamp = formatBackupTimestamp(new Date());
-  const filename = getBackupFilename(timestamp);
-  const backupPath = path.join(BACKUP_DIR, filename);
-  const backupData = {
-    meta: {
-      createdAt: new Date().toISOString(),
-      version: 1,
-      dataCounts: {
-        rubbings: parsedData.rubbings.length,
-        damages: parsedData.damages.length,
-        batches: parsedData.batches.length,
-        repairImages: parsedData.repairImages.length
-      }
-    },
-    data: parsedData
-  };
-  await writeFile(backupPath, JSON.stringify(backupData, null, 2));
-  const stats = await stat(backupPath);
-  return {
-    filename,
-    createdAt: backupData.meta.createdAt,
-    size: stats.size,
-    dataCounts: backupData.meta.dataCounts
-  };
 }
 
-async function listBackups() {
-  await ensureBackupDir();
-  const files = await readdir(BACKUP_DIR);
-  const backupFiles = files.filter((f) => f.startsWith("backup_") && f.endsWith(".json"));
-  const backups = [];
-  for (const filename of backupFiles) {
-    try {
-      const backupPath = path.join(BACKUP_DIR, filename);
-      const stats = await stat(backupPath);
-      const content = JSON.parse(await readFile(backupPath, "utf8"));
-      backups.push({
-        filename,
-        createdAt: content.meta?.createdAt || stats.mtime.toISOString(),
-        size: stats.size,
-        dataCounts: content.meta?.dataCounts || null
-      });
-    } catch {
-      continue;
+async function readAuditLog() {
+  await ensureAuditLog();
+  return JSON.parse(await readFile(AUDIT_LOG_FILE, "utf8"));
+}
+
+async function writeAuditLog(logs) {
+  await writeFile(AUDIT_LOG_FILE, JSON.stringify(logs, null, 2));
+}
+
+async function writeAuditEntry(entry) {
+  const logs = await readAuditLog();
+  logs.push({
+    id: makeId("audit"),
+    timestamp: new Date().toISOString(),
+    ...entry
+  });
+  await writeAuditLog(logs);
+}
+
+function buildChangeSummary(actionType, oldValues, newValues) {
+  switch (actionType) {
+    case AUDIT_ACTION_TYPES.CREATE_RUBBING:
+      return `创建拓片：编号 ${newValues.code}，来源 ${newValues.source}`;
+    case AUDIT_ACTION_TYPES.REGISTER_DAMAGE:
+      return `登记缺损：位置 ${newValues.position}，类型 ${newValues.type}，所属拓片 ${newValues.rubbingId}`;
+    case AUDIT_ACTION_TYPES.UPDATE_DAMAGE: {
+      const changes = [];
+      if (oldValues.position !== newValues.position) changes.push(`位置: ${oldValues.position} → ${newValues.position}`);
+      if (oldValues.type !== newValues.type) changes.push(`类型: ${oldValues.type} → ${newValues.type}`);
+      if (oldValues.status !== newValues.status) changes.push(`状态: ${oldValues.status} → ${newValues.status}`);
+      if (oldValues.repairNote !== newValues.repairNote) changes.push(`修补说明已更新`);
+      if (oldValues.afterPhotoUrl !== newValues.afterPhotoUrl) changes.push(`修补后照片已更新`);
+      return `更新缺损：${changes.length > 0 ? changes.join("; ") : "无字段变更"}`;
     }
+    case AUDIT_ACTION_TYPES.CREATE_BATCH:
+      return `创建批次：${newValues.name}，包含 ${newValues.damageIds.length} 项缺损`;
+    case AUDIT_ACTION_TYPES.COMPLETE_BATCH:
+      return `完成批次：${newValues.name}，共完成 ${newValues.damageIds.length} 项缺损修补`;
+    default:
+      return `${actionType}: target ${newValues?.id || "unknown"}`;
   }
-  backups.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  return backups;
 }
 
-async function readBackupFile(filename) {
-  sanitizeBackupFilename(filename);
-  await ensureBackupDir();
-  const backupPath = path.join(BACKUP_DIR, filename);
-  let content;
+async function executeWithAudit({ actionType, targetType, targetId, oldValues, newValues, businessResult, statusCode, res }) {
   try {
-    content = await readFile(backupPath, "utf8");
-  } catch {
-    const error = new Error(`备份文件不存在: ${filename}`);
-    error.code = BACKUP_ERRORS.BACKUP_NOT_FOUND;
-    error.status = 404;
-    throw error;
+    const changeSummary = buildChangeSummary(actionType, oldValues, newValues);
+    await writeAuditEntry({
+      actionType,
+      targetType,
+      targetId,
+      changeSummary,
+      oldValues: oldValues || null,
+      newValues: newValues || null
+    });
+    return send(res, statusCode, businessResult);
+  } catch (auditError) {
+    return send(res, 500, {
+      error: "业务操作成功，但审计日志写入失败，操作已完成但无法追踪",
+      auditError: auditError.message || "未知错误",
+      businessData: businessResult
+    });
   }
-  let parsed;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    const error = new Error("备份文件JSON损坏");
-    error.code = BACKUP_ERRORS.JSON_CORRUPTED;
-    error.status = 400;
-    throw error;
-  }
-  return parsed;
 }
 
-async function validateBackup(filename) {
-  const backup = await readBackupFile(filename);
-  if (!backup.data || !validateDataStructure(backup.data)) {
-    const error = new Error("备份数据结构不符合项目预期");
-    error.code = BACKUP_ERRORS.INVALID_STRUCTURE;
-    error.status = 400;
-    throw error;
-  }
-  const stats = await stat(path.join(BACKUP_DIR, filename));
-  return {
-    filename,
-    valid: true,
-    createdAt: backup.meta?.createdAt || stats.mtime.toISOString(),
-    dataCounts: backup.meta?.dataCounts || {
-      rubbings: backup.data.rubbings.length,
-      damages: backup.data.damages.length,
-      batches: backup.data.batches.length,
-      repairImages: backup.data.repairImages.length
-    },
-    size: stats.size
-  };
-}
-
-async function restoreFromBackup(filename) {
-  const validation = await validateBackup(filename);
-  const backup = await readBackupFile(filename);
-  const tempFile = path.join(BACKUP_DIR, `temp_restore_${Date.now()}.json`);
-  try {
-    await writeFile(tempFile, JSON.stringify(backup.data, null, 2));
-    const verifyData = JSON.parse(await readFile(tempFile, "utf8"));
-    if (!validateDataStructure(verifyData)) {
-      throw new Error("恢复前校验失败：数据结构无效");
-    }
-    await writeFile(DB_FILE, JSON.stringify(backup.data, null, 2));
-    return {
-      success: true,
-      restoredFrom: filename,
-      restoredAt: new Date().toISOString(),
-      dataCounts: validation.dataCounts
-    };
-  } finally {
-    try {
-      await unlink(tempFile);
-    } catch {
-    }
-  }
+function queryAuditLogs(logs, { actionType, targetId } = {}) {
+  return logs.filter((entry) => {
+    if (actionType && entry.actionType !== actionType) return false;
+    if (targetId && entry.targetId !== targetId) return false;
+    return true;
+  }).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 }
 
 function send(res, status, body) {
@@ -763,7 +655,15 @@ async function handle(req, res) {
     };
     db.rubbings.push(rubbing);
     await writeDb(db);
-    return send(res, 201, { data: rubbing });
+    return executeWithAudit({
+      actionType: AUDIT_ACTION_TYPES.CREATE_RUBBING,
+      targetType: "rubbing",
+      targetId: rubbing.id,
+      newValues: rubbing,
+      businessResult: { data: rubbing },
+      statusCode: 201,
+      res
+    });
   }
 
   const rubbingDamagesMatch = pathname.match(/^\/rubbings\/([^/]+)\/damages$/);
@@ -795,7 +695,15 @@ async function handle(req, res) {
     };
     db.damages.push(damage);
     await writeDb(db);
-    return send(res, 201, { data: damage });
+    return executeWithAudit({
+      actionType: AUDIT_ACTION_TYPES.REGISTER_DAMAGE,
+      targetType: "damage",
+      targetId: damage.id,
+      newValues: damage,
+      businessResult: { data: damage },
+      statusCode: 201,
+      res
+    });
   }
 
   const summaryMatch = pathname.match(/^\/rubbings\/([^/]+)\/summary$/);
@@ -853,6 +761,7 @@ async function handle(req, res) {
   if (damagePatchMatch && req.method === "PATCH") {
     const damage = db.damages.find((item) => item.id === damagePatchMatch[1]);
     if (!damage) return send(res, 404, { error: "缺损项不存在" });
+    const oldValues = { ...damage };
     const body = await parseBody(req);
     Object.assign(damage, {
       position: body.position ?? damage.position,
@@ -865,7 +774,17 @@ async function handle(req, res) {
     damage.repairedAt = damage.status === "repaired" ? new Date().toISOString() : damage.repairedAt;
     await writeDb(db);
     const images = db.repairImages.filter((img) => img.damageId === damage.id);
-    return send(res, 200, { data: { ...normalizeDamage(damage), images: groupImagesByStage(images) } });
+    const responseData = { data: { ...normalizeDamage(damage), images: groupImagesByStage(images) } };
+    return executeWithAudit({
+      actionType: AUDIT_ACTION_TYPES.UPDATE_DAMAGE,
+      targetType: "damage",
+      targetId: damage.id,
+      oldValues,
+      newValues: { ...damage },
+      businessResult: responseData,
+      statusCode: 200,
+      res
+    });
   }
 
   const approveMatch = pathname.match(/^\/damages\/([^/]+)\/approve$/);
@@ -1004,7 +923,16 @@ async function handle(req, res) {
       }
     });
     await writeDb(db);
-    return send(res, 201, { data: enrichBatch(db, batch) });
+    const enrichedBatch = enrichBatch(db, batch);
+    return executeWithAudit({
+      actionType: AUDIT_ACTION_TYPES.CREATE_BATCH,
+      targetType: "batch",
+      targetId: batch.id,
+      newValues: batch,
+      businessResult: { data: enrichedBatch },
+      statusCode: 201,
+      res
+    });
   }
 
   const batchMatch = pathname.match(/^\/batches\/([^/]+)$/);
@@ -1018,6 +946,7 @@ async function handle(req, res) {
   if (completeMatch && req.method === "POST") {
     const batch = db.batches.find((item) => item.id === completeMatch[1]);
     if (!batch) return send(res, 404, { error: "修补批次不存在" });
+    const oldValues = { ...batch };
     const body = await parseBody(req);
     const results = Array.isArray(body.results) ? body.results : [];
     const archiveImages = Array.isArray(body.archiveImages) ? body.archiveImages : [];
@@ -1071,7 +1000,17 @@ async function handle(req, res) {
       damage.repairedAt = new Date().toISOString();
     });
     await writeDb(db);
-    return send(res, 200, { data: enrichBatch(db, batch) });
+    const enrichedBatch = enrichBatch(db, batch);
+    return executeWithAudit({
+      actionType: AUDIT_ACTION_TYPES.COMPLETE_BATCH,
+      targetType: "batch",
+      targetId: batch.id,
+      oldValues,
+      newValues: { ...batch },
+      businessResult: { data: enrichedBatch },
+      statusCode: 200,
+      res
+    });
   }
 
   if (req.method === "GET" && pathname === "/dashboard/repair-workbench") {
@@ -1313,49 +1252,12 @@ async function handle(req, res) {
     return sendCsv(res, filename, csv);
   }
 
-  if (req.method === "GET" && pathname === "/backups") {
-    const backups = await listBackups();
-    return send(res, 200, { data: backups, total: backups.length });
-  }
-
-  if (req.method === "POST" && pathname === "/backups") {
-    try {
-      const backup = await createBackup();
-      return send(res, 201, { data: backup });
-    } catch (error) {
-      return send(res, error.status || 500, {
-        error: error.message,
-        code: error.code
-      });
-    }
-  }
-
-  const backupValidateMatch = pathname.match(/^\/backups\/([^/]+)\/validate$/);
-  if (backupValidateMatch && req.method === "GET") {
-    const filename = sanitizeBackupFilename(decodeURIComponent(backupValidateMatch[1]));
-    try {
-      const result = await validateBackup(filename);
-      return send(res, 200, { data: result });
-    } catch (error) {
-      return send(res, error.status || 500, {
-        error: error.message,
-        code: error.code
-      });
-    }
-  }
-
-  const backupRestoreMatch = pathname.match(/^\/backups\/([^/]+)\/restore$/);
-  if (backupRestoreMatch && req.method === "POST") {
-    const filename = sanitizeBackupFilename(decodeURIComponent(backupRestoreMatch[1]));
-    try {
-      const result = await restoreFromBackup(filename);
-      return send(res, 200, { data: result });
-    } catch (error) {
-      return send(res, error.status || 500, {
-        error: error.message,
-        code: error.code
-      });
-    }
+  if (req.method === "GET" && pathname === "/audit-logs") {
+    const actionType = url.searchParams.get("actionType");
+    const targetId = url.searchParams.get("targetId");
+    const logs = await readAuditLog();
+    const filtered = queryAuditLogs(logs, { actionType, targetId });
+    return send(res, 200, { data: filtered, total: filtered.length });
   }
 
   return send(res, 404, { error: "接口不存在", routes });

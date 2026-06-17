@@ -23,6 +23,14 @@
       "paperSize": "80x120cm",
       "note": "大面积风化",
       "createdAt": "2026-03-10T00:00:00.000Z"
+    },
+    {
+      "id": "rubbing_mqhhe8fe_f721ne",
+      "code": "TP-测试-001",
+      "source": "测试来源",
+      "paperSize": "30x40cm",
+      "note": "测试拓片",
+      "createdAt": "2026-06-17T02:58:13.418Z"
     }
   ],
   "damages": [
@@ -115,6 +123,21 @@
       "repairedAt": "2026-06-11T00:00:00.000Z",
       "reviewStatus": "rejected",
       "rejectReason": "修补颜色偏差较大"
+    },
+    {
+      "id": "damage_mqhhf16l_uilv6h",
+      "rubbingId": "rubbing_mqhhe8fe_f721ne",
+      "position": "测试位置",
+      "type": "虫蛀",
+      "beforePhotoUrl": "https://example.com/test.jpg",
+      "afterPhotoUrl": "https://example.com/after.jpg",
+      "status": "repaired",
+      "repairNote": "修补完成，效果良好",
+      "batchId": "batch_mqhhgufv_wlh9i4",
+      "reviewStatus": "approved",
+      "rejectReason": "",
+      "createdAt": "2026-06-17T02:58:50.685Z",
+      "repairedAt": "2026-06-17T03:00:36.051Z"
     }
   ],
   "batches": [
@@ -148,6 +171,20 @@
       "plannedStartAt": "2026-06-10T00:00:00.000Z",
       "plannedEndAt": "2026-06-25T00:00:00.000Z",
       "responsible": "李师傅"
+    },
+    {
+      "id": "batch_mqhhgufv_wlh9i4",
+      "name": "测试批次001",
+      "status": "completed",
+      "damageIds": [
+        "damage_mqhhf16l_uilv6h"
+      ],
+      "note": "批次完成",
+      "plannedStartAt": null,
+      "plannedEndAt": null,
+      "responsible": null,
+      "createdAt": "2026-06-17T03:00:15.259Z",
+      "completedAt": "2026-06-17T03:00:36.051Z"
     }
   ],
   "repairImages": [

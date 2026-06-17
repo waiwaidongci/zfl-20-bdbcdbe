@@ -1,0 +1,140 @@
+[
+  {
+    "id": "audit_mqhhe8ff_5kghgj",
+    "timestamp": "2026-06-17T02:58:13.419Z",
+    "actionType": "create_rubbing",
+    "targetType": "rubbing",
+    "targetId": "rubbing_mqhhe8fe_f721ne",
+    "changeSummary": "创建拓片：编号 TP-测试-001，来源 测试来源",
+    "oldValues": null,
+    "newValues": {
+      "id": "rubbing_mqhhe8fe_f721ne",
+      "code": "TP-测试-001",
+      "source": "测试来源",
+      "paperSize": "30x40cm",
+      "note": "测试拓片",
+      "createdAt": "2026-06-17T02:58:13.418Z"
+    }
+  },
+  {
+    "id": "audit_mqhhf16m_r6ljht",
+    "timestamp": "2026-06-17T02:58:50.686Z",
+    "actionType": "register_damage",
+    "targetType": "damage",
+    "targetId": "damage_mqhhf16l_uilv6h",
+    "changeSummary": "登记缺损：位置 测试位置，类型 虫蛀，所属拓片 rubbing_mqhhe8fe_f721ne",
+    "oldValues": null,
+    "newValues": {
+      "id": "damage_mqhhf16l_uilv6h",
+      "rubbingId": "rubbing_mqhhe8fe_f721ne",
+      "position": "测试位置",
+      "type": "虫蛀",
+      "beforePhotoUrl": "https://example.com/test.jpg",
+      "afterPhotoUrl": "",
+      "status": "pending",
+      "repairNote": "",
+      "batchId": null,
+      "reviewStatus": "review_pending",
+      "rejectReason": "",
+      "createdAt": "2026-06-17T02:58:50.685Z",
+      "repairedAt": null
+    }
+  },
+  {
+    "id": "audit_mqhhfio3_v0it08",
+    "timestamp": "2026-06-17T02:59:13.347Z",
+    "actionType": "update_damage",
+    "targetType": "damage",
+    "targetId": "damage_mqhhf16l_uilv6h",
+    "changeSummary": "更新缺损：状态: pending → in_repair; 修补说明已更新",
+    "oldValues": {
+      "id": "damage_mqhhf16l_uilv6h",
+      "rubbingId": "rubbing_mqhhe8fe_f721ne",
+      "position": "测试位置",
+      "type": "虫蛀",
+      "beforePhotoUrl": "https://example.com/test.jpg",
+      "afterPhotoUrl": "",
+      "status": "pending",
+      "repairNote": "",
+      "batchId": null,
+      "reviewStatus": "review_pending",
+      "rejectReason": "",
+      "createdAt": "2026-06-17T02:58:50.685Z",
+      "repairedAt": null
+    },
+    "newValues": {
+      "id": "damage_mqhhf16l_uilv6h",
+      "rubbingId": "rubbing_mqhhe8fe_f721ne",
+      "position": "测试位置",
+      "type": "虫蛀",
+      "beforePhotoUrl": "https://example.com/test.jpg",
+      "afterPhotoUrl": "",
+      "status": "in_repair",
+      "repairNote": "正在修复中",
+      "batchId": null,
+      "reviewStatus": "review_pending",
+      "rejectReason": "",
+      "createdAt": "2026-06-17T02:58:50.685Z",
+      "repairedAt": null
+    }
+  },
+  {
+    "id": "audit_mqhhgufv_3d4doj",
+    "timestamp": "2026-06-17T03:00:15.259Z",
+    "actionType": "create_batch",
+    "targetType": "batch",
+    "targetId": "batch_mqhhgufv_wlh9i4",
+    "changeSummary": "创建批次：测试批次001，包含 1 项缺损",
+    "oldValues": null,
+    "newValues": {
+      "id": "batch_mqhhgufv_wlh9i4",
+      "name": "测试批次001",
+      "status": "open",
+      "damageIds": [
+        "damage_mqhhf16l_uilv6h"
+      ],
+      "note": "测试备注",
+      "plannedStartAt": null,
+      "plannedEndAt": null,
+      "responsible": null,
+      "createdAt": "2026-06-17T03:00:15.259Z",
+      "completedAt": null
+    }
+  },
+  {
+    "id": "audit_mqhhhahf_eg1fh2",
+    "timestamp": "2026-06-17T03:00:36.051Z",
+    "actionType": "complete_batch",
+    "targetType": "batch",
+    "targetId": "batch_mqhhgufv_wlh9i4",
+    "changeSummary": "完成批次：测试批次001，共完成 1 项缺损修补",
+    "oldValues": {
+      "id": "batch_mqhhgufv_wlh9i4",
+      "name": "测试批次001",
+      "status": "open",
+      "damageIds": [
+        "damage_mqhhf16l_uilv6h"
+      ],
+      "note": "测试备注",
+      "plannedStartAt": null,
+      "plannedEndAt": null,
+      "responsible": null,
+      "createdAt": "2026-06-17T03:00:15.259Z",
+      "completedAt": null
+    },
+    "newValues": {
+      "id": "batch_mqhhgufv_wlh9i4",
+      "name": "测试批次001",
+      "status": "completed",
+      "damageIds": [
+        "damage_mqhhf16l_uilv6h"
+      ],
+      "note": "批次完成",
+      "plannedStartAt": null,
+      "plannedEndAt": null,
+      "responsible": null,
+      "createdAt": "2026-06-17T03:00:15.259Z",
+      "completedAt": "2026-06-17T03:00:36.051Z"
+    }
+  }
+]
