@@ -1,8 +1,12 @@
 const fs = require("fs");
 const path = require("path");
+const net = require("net");
+const http = require("http");
+const { spawn } = require("child_process");
 const migrator = require("./data-migrator");
 
 const DB_FILE = path.join(__dirname, "data", "db.json");
+const AUDIT_LOG_FILE = path.join(__dirname, "data", "audit-logs.json");
 
 function ensureDataDir() {
   const dir = path.dirname(DB_FILE);
@@ -225,8 +229,171 @@ function restoreDb(backupFile) {
   }
 }
 
+function backupAuditLog(backupFile) {
+  if (fs.existsSync(AUDIT_LOG_FILE)) {
+    fs.copyFileSync(AUDIT_LOG_FILE, backupFile);
+  }
+}
+
+function restoreAuditLog(backupFile) {
+  if (fs.existsSync(backupFile)) {
+    fs.copyFileSync(backupFile, AUDIT_LOG_FILE);
+    try {
+      fs.unlinkSync(backupFile);
+    } catch (_) {}
+  }
+}
+
+function findAvailablePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+    probe.on("error", reject);
+  });
+}
+
+function createTestServer(configuredPort = null) {
+  let server;
+  let baseUrl;
+
+  const start = () => new Promise(async (resolve, reject) => {
+    const port = configuredPort || await findAvailablePort();
+    baseUrl = `http://127.0.0.1:${port}`;
+    server = spawn("node", ["server.js"], {
+      cwd: __dirname,
+      env: { ...process.env, PORT: String(port) }
+    });
+
+    server.stderr.on("data", (data) => {
+      process.stderr.write(`[server stderr] ${data}`);
+    });
+
+    let resolved = false;
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        reject(new Error("Server startup timeout"));
+      }
+    }, 5000);
+
+    server.stdout.on("data", (data) => {
+      const msg = data.toString();
+      if (msg.includes("Rubbing repair API running") && !resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        setTimeout(resolve, 200);
+      }
+    });
+
+    server.on("error", (err) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        reject(err);
+      }
+    });
+  });
+
+  const stop = () => new Promise((resolve) => {
+    if (server) {
+      server.kill("SIGTERM");
+      server.on("close", resolve);
+      setTimeout(resolve, 1000);
+    } else {
+      resolve();
+    }
+  });
+
+  const request = (method, pathname, body, expectText = false) => new Promise((resolve, reject) => {
+    const url = `${baseUrl}${pathname}`;
+    const options = {
+      method,
+      headers: { "Content-Type": "application/json" }
+    };
+    const req = http.request(url, options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        if (expectText) {
+          resolve({ status: res.statusCode, body: data, headers: res.headers });
+        } else {
+          let parsed = data;
+          try {
+            parsed = JSON.parse(data);
+          } catch (_) {}
+          resolve({ status: res.statusCode, body: parsed, headers: res.headers });
+        }
+      });
+    });
+    req.on("error", reject);
+    if (body !== undefined) {
+      req.write(JSON.stringify(body));
+    }
+    req.end();
+  });
+
+  const getBaseUrl = () => baseUrl;
+
+  return { start, stop, request, getBaseUrl };
+}
+
+function createAssert() {
+  let passed = 0;
+  let failed = 0;
+
+  const assert = (condition, message) => {
+    if (condition) {
+      passed += 1;
+      console.log(`  ✅ ${message}`);
+    } else {
+      failed += 1;
+      console.log(`  ❌ ${message}`);
+    }
+  };
+
+  const assertEqual = (actual, expected, message) => {
+    if (actual === expected) {
+      passed += 1;
+      console.log(`  ✅ ${message}`);
+    } else {
+      failed += 1;
+      console.log(`  ❌ ${message} (expected: ${JSON.stringify(expected)}, actual: ${JSON.stringify(actual)})`);
+    }
+  };
+
+  const assertNotNull = (value, message) => {
+    if (value !== null && value !== undefined) {
+      passed += 1;
+      console.log(`  ✅ ${message}`);
+    } else {
+      failed += 1;
+      console.log(`  ❌ ${message} (value is null/undefined)`);
+    }
+  };
+
+  const assertContains = (str, substr, message) => {
+    if (str && String(str).includes(substr)) {
+      passed += 1;
+      console.log(`  ✅ ${message}`);
+    } else {
+      failed += 1;
+      console.log(`  ❌ ${message}`);
+      console.log(`    期望包含: ${substr}`);
+      console.log(`    实际: ${str}`);
+    }
+  };
+
+  const getStats = () => ({ passed, failed });
+  const resetStats = () => { passed = 0; failed = 0; };
+
+  return { assert, assertEqual, assertNotNull, assertContains, getStats, resetStats };
+}
+
 module.exports = {
   DB_FILE,
+  AUDIT_LOG_FILE,
   isV2Structure,
   isV3Structure,
   isVersionedStructure,
@@ -238,5 +405,10 @@ module.exports = {
   readDb,
   writeDb,
   backupDb,
-  restoreDb
+  restoreDb,
+  backupAuditLog,
+  restoreAuditLog,
+  findAvailablePort,
+  createTestServer,
+  createAssert
 };

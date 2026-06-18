@@ -483,3 +483,86 @@ v3 完全保留 v2 实体读取兼容性：
 - `POST /backups/:filename/restore`
 - `GET /audit-logs?actionType=&targetId=&targetType=&startDate=&endDate=&success=`
 - `GET /audit-trail?eventType=&targetId=&targetType=&startDate=&endDate=&actor=`
+
+## 本地验证（测试）
+
+本项目使用零依赖的 Node.js 测试体系，通过统一入口 `test-runner.js` 管理所有分散的 `test-*.js` 脚本。
+
+### 快速开始
+
+```bash
+# 列出所有可用测试
+node test-runner.js --list
+
+# 运行全部测试（默认顺序）
+node test-runner.js
+node test-runner.js all
+
+# 运行单个测试
+node test-runner.js test-review.js
+
+# 运行指定多个测试
+node test-runner.js test-dashboard.js test-schedule.js
+```
+
+### 命令总览
+
+| 命令| 模块| 描述 |
+|---|---|---|
+| `test-review.js` | 缺损审核模块 | 审核通过/驳回、旧数据兼容、CSV导出审核字段 |
+| `test-dashboard.js` | 修补工作台看板 | 看板统计、筛选聚合、负责人聚合 |
+| `test-schedule.js` | 批次排程模块 | 排程创建、日期范围筛选、状态筛选、冲突校验 |
+| `test-repair-images.js` | 修补影像归档 | 影像登记/查询、阶段校验、主图约束、批次归档影像 |
+| `test-export.js` | 数据导出模块 | CSV导出、字段筛选、过滤条件、特殊字符转义 |
+| `test-batch-import.js` | 批量导入流程 | 预检不落库、确认落库、重复编号跳过、引用校验 |
+| `test-batch-rollback.js` | 批次完成回滚 | 回滚快照、重复完成、引用检查、归档影像清理 |
+| `test-partial-rollback.js` | 批次部分回滚 | 部分缺损回滚、连续回滚、引用冲突、审计日志 |
+| `test-partial-rollback-scheduling.js` | 部分回滚后排程 | 回滚后重新排程、缺损释放验证 |
+| `test-audit-logs.js` | 审计日志扩展 | 审核/归档/导入/备份审计、多维度筛选 |
+| `test-concurrent-writes.js` | 并发写入与乐观锁 | 并发创建缺损、并发完成批次、版本冲突保护 |
+
+### 失败保留现场数据
+
+调试失败用例时，启用保留模式即可保留现场数据便于排查：
+
+```bash
+# 方式1：命令行参数
+node test-runner.js all --keep-failure
+
+# 方式2：环境变量
+KEEP_FAILURE=1 node test-runner.js test-audit-logs.js
+```
+
+保留模式下，测试失败后不会自动恢复 `data/db.json` 和 `data/audit-logs.json`，原始数据备份在：
+- `data/db.json.runner_backup`
+- `data/audit-logs.json.runner_backup`
+
+排查完毕后手动恢复：
+
+```bash
+node test-runner.js --restore
+```
+
+### 其它辅助命令
+
+```bash
+# 显示帮助
+node test-runner.js --help
+node test-runner.js -h
+
+# 手动清理备份（用于 KEEP_FAILURE 后的数据）
+node test-runner.js --restore
+
+# 清理 runner 备份文件（不恢复，只删）
+node test-runner.js --clean-backup
+```
+
+### 设计原则
+
+- **零依赖**：不引入任何测试框架，纯 Node.js 内置模块实现
+- **数据隔离**：每个测试脚本独立子进程运行，互不干扰
+- **自动备份**：runner 启动前自动备份 `db.json` 和 `audit-logs.json`
+- **成功恢复**：测试通过后自动恢复到测试前的状态
+- **失败保留**：`--keep-failure` 模式下失败时保留现场，便于调试
+- **顺序执行**：全量测试按功能依赖顺序依次执行
+- **复用现有逻辑**：完全复用各脚本中已有的启动 server、端口探测、备份恢复实现
