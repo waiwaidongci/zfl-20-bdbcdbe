@@ -2969,7 +2969,7 @@ async function handle(req, res) {
     const filename = sanitizeBackupFilename(decodeURIComponent(backupRestoreMatch[1]));
     try {
       const body = await parseBody(req);
-      let expectedVersion = undefined;
+      let expectedVersion = db.__writeVersion;
       if (body && typeof body.expectedVersion === "number") {
         expectedVersion = body.expectedVersion;
       }

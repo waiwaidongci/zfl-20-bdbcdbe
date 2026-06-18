@@ -347,25 +347,24 @@ async function runBackupRestoreConflictTest() {
   console.log(`  缺损创建冲突 (409): ${damageConflict}`);
   console.log(`  备份恢复状态: ${restoreResult.status}`);
   assert(
-    restoreResult.status === 200 || restoreResult.status === 409,
-    `备份恢复应返回 200 或 409，实际返回: ${restoreResult.status}`
+    restoreResult.status === 409,
+    `并发写入后恢复必须返回 409，实际返回: ${restoreResult.status} - ${JSON.stringify(restoreResult.body)}`
   );
-
-  if (restoreResult.status === 200) {
-    console.log("  ✓ 备份恢复成功");
-  } else if (restoreResult.status === 409) {
-    console.log("  ✓ 备份恢复检测到冲突（409）");
-    assert(
-      restoreResult.body.code === "VERSION_CONFLICT",
-      `冲突时错误码应为 VERSION_CONFLICT，实际: ${restoreResult.body.code}`
-    );
-  }
-
-  if (damageConflict > 0 || restoreResult.status === 409) {
-    console.log("  ✓ 检测到版本冲突，乐观锁在备份恢复场景生效");
-  } else {
-    console.log("  ⚠ 未检测到明显冲突，写入队列可能有序地完成了所有操作");
-  }
+  assert(
+    restoreResult.body.code === "VERSION_CONFLICT",
+    `冲突时错误码应为 VERSION_CONFLICT，实际: ${restoreResult.body.code}`
+  );
+  assert(
+    restoreResult.body.error && restoreResult.body.error.includes("版本冲突"),
+    "并发恢复冲突错误信息应包含版本冲突描述"
+  );
+  const afterConflictRes = await request("GET", `/rubbings/${rubbingId}/damages`);
+  assert(afterConflictRes.status === 200, "恢复被409阻断后拓片仍应存在");
+  assert(
+    afterConflictRes.body.data.length === damageSuccess,
+    "恢复被409阻断后成功创建的缺损不应被覆盖"
+  );
+  console.log("  ✓ 并发恢复检测到 409，且未覆盖已成功写入的数据");
 
   console.log("\n  --- 子测试：显式 expectedVersion 冲突检测 ---");
   const explicitVersion = versionBefore;
@@ -484,10 +483,15 @@ async function main() {
     console.log(`服务器运行在 ${baseUrl}`);
 
     await runVersionCheckTest();
+    passed++;
     await runConcurrentCreateDamagesTest();
+    passed++;
     await runConcurrentCompleteBatchTest();
+    passed++;
     await runBackupRestoreConflictTest();
+    passed++;
     await runWriteSerializationTest();
+    passed++;
 
   } catch (err) {
     console.error("测试运行失败:", err);
