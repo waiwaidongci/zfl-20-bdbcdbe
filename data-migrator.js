@@ -702,12 +702,13 @@ async function migrateV2ToV3(oldData, migrationMeta) {
   const newStructure = buildV3EmptyStructure();
   newStructure.schemaVersion = 3;
 
-  const entities = oldData.entities || {
-    rubbings: oldData.rubbings || [],
-    damages: oldData.damages || [],
-    batches: oldData.batches || [],
-    repairImages: oldData.repairImages || [],
-    batchSnapshots: oldData.batchSnapshots || []
+  const sourceEntities = oldData.entities || oldData;
+  const entities = {
+    rubbings: sourceEntities.rubbings || [],
+    damages: sourceEntities.damages || [],
+    batches: sourceEntities.batches || [],
+    repairImages: sourceEntities.repairImages || [],
+    batchSnapshots: sourceEntities.batchSnapshots || []
   };
 
   const oldMigrationHistory = oldData.meta && Array.isArray(oldData.meta.migrationHistory)
