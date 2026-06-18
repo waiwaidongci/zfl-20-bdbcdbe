@@ -223,10 +223,10 @@ async function runTests() {
 
   const healthRes = await httpRequestCsv("GET", "/health");
   const healthBody = JSON.parse(healthRes.body);
-  assert(healthBody.routes.includes("GET /export/rubbings?startDate=&endDate="), "包含 GET /export/rubbings");
-  assert(healthBody.routes.includes("GET /export/damages?status=&type=&startDate=&endDate="), "包含 GET /export/damages");
-  assert(healthBody.routes.includes("GET /export/batches?status=&startDate=&endDate="), "包含 GET /export/batches");
-  assert(healthBody.routes.includes("GET /export/repair-results?status=&type=&startDate=&endDate="), "包含 GET /export/repair-results");
+  assert(healthBody.routes.includes("GET /export/rubbings?startDate=&endDate=&fields="), "包含 GET /export/rubbings");
+  assert(healthBody.routes.includes("GET /export/damages?status=&type=&startDate=&endDate=&fields="), "包含 GET /export/damages");
+  assert(healthBody.routes.includes("GET /export/batches?status=&startDate=&endDate=&fields="), "包含 GET /export/batches");
+  assert(healthBody.routes.includes("GET /export/repair-results?status=&type=&startDate=&endDate=&fields="), "包含 GET /export/repair-results");
 
   await stopServer();
 
@@ -533,6 +533,171 @@ async function runTests() {
   const d6Row = rejectParsed.rows.find((row) => row.includes("d6"));
   const rejectIdx = rejectParsed.headers.indexOf("驳回原因");
   assert(d6Row && d6Row[rejectIdx] === "修补颜色偏差较大", "正确导出驳回原因中文内容");
+
+  await stopServer();
+
+  console.log("\n【场景16】拓片导出——字段筛选（只选部分列）");
+  seedMultiBatchDb();
+  await startServer();
+
+  const rubbingsFieldsRes = await httpRequestCsv("GET", "/export/rubbings?fields=code,source,damageCount");
+  assertEqual(rubbingsFieldsRes.status, 200, "字段筛选导出返回 200");
+  assert(rubbingsFieldsRes.body.startsWith("\uFEFF"), "字段筛选导出仍包含 BOM");
+
+  const rubbingsFieldsParsed = parseCsv(rubbingsFieldsRes.body);
+  assertEqual(rubbingsFieldsParsed.headers.length, 3, "筛选后有3列");
+  assertEqual(rubbingsFieldsParsed.headers[0], "拓片编号", "第一列为拓片编号");
+  assertEqual(rubbingsFieldsParsed.headers[1], "来源", "第二列为来源");
+  assertEqual(rubbingsFieldsParsed.headers[2], "缺损总数", "第三列为缺损总数");
+  assertEqual(rubbingsFieldsParsed.rows.length, 3, "筛选后仍有3条数据");
+  assertEqual(rubbingsFieldsParsed.rows[0].length, 3, "每行有3列");
+
+  await stopServer();
+
+  console.log("\n【场景17】拓片导出——字段顺序调整");
+  seedMultiBatchDb();
+  await startServer();
+
+  const rubbingsOrderRes = await httpRequestCsv("GET", "/export/rubbings?fields=createdAt,code,id");
+  const rubbingsOrderParsed = parseCsv(rubbingsOrderRes.body);
+  assertEqual(rubbingsOrderParsed.headers.length, 3, "顺序调整后有3列");
+  assertEqual(rubbingsOrderParsed.headers[0], "创建时间", "第一列是创建时间（按请求顺序）");
+  assertEqual(rubbingsOrderParsed.headers[1], "拓片编号", "第二列是拓片编号");
+  assertEqual(rubbingsOrderParsed.headers[2], "拓片ID", "第三列是拓片ID");
+
+  const r1Row = rubbingsOrderParsed.rows.find((row) => row.includes("TP-清-014"));
+  assert(r1Row && r1Row[1] === "TP-清-014", "数据值与列顺序对应正确（code在第2列）");
+  assert(r1Row && r1Row[2] === "r1", "id在第3列，列顺序正确");
+
+  await stopServer();
+
+  console.log("\n【场景18】缺损项导出——非法字段返回清晰错误");
+  seedMultiBatchDb();
+  await startServer();
+
+  const invalidDamagesRes = await httpRequestCsv("GET", "/export/damages?fields=id,invalidField,type");
+  assertEqual(invalidDamagesRes.status, 400, "非法字段返回 400 状态码");
+  assertEqual(invalidDamagesRes.headers["content-type"], "application/json; charset=utf-8", "错误返回 JSON 格式");
+
+  const invalidDamagesBody = JSON.parse(invalidDamagesRes.body);
+  assert(invalidDamagesBody.error.includes("非法字段"), "错误消息包含非法字段提示");
+  assert(invalidDamagesBody.error.includes("invalidField"), "错误消息指出具体非法字段名");
+  assert(invalidDamagesBody.code === "INVALID_FIELDS", "错误码为 INVALID_FIELDS");
+  assert(Array.isArray(invalidDamagesBody.invalidFields), "返回 invalidFields 数组");
+  assert(invalidDamagesBody.invalidFields.includes("invalidField"), "invalidFields 包含非法字段");
+  assert(Array.isArray(invalidDamagesBody.validFields), "返回 validFields 数组");
+  assert(invalidDamagesBody.validFields.includes("id"), "validFields 包含合法字段示例");
+  assert(invalidDamagesBody.validFields.includes("type"), "validFields 包含 type 字段");
+
+  await stopServer();
+
+  console.log("\n【场景19】批次导出——单字段导出");
+  seedMultiBatchDb();
+  await startServer();
+
+  const singleFieldRes = await httpRequestCsv("GET", "/export/batches?fields=name");
+  const singleFieldParsed = parseCsv(singleFieldRes.body);
+  assertEqual(singleFieldParsed.headers.length, 1, "单字段导出有1列");
+  assertEqual(singleFieldParsed.headers[0], "批次名称", "列标题为批次名称");
+  assertEqual(singleFieldParsed.rows.length, 2, "有2条数据");
+  assert(singleFieldParsed.rows.every((row) => row.length === 1), "每行只有1列");
+  assert(singleFieldParsed.rows.some((row) => row[0] === "六月第一批修补"), "包含第一批名称");
+  assert(singleFieldParsed.rows.some((row) => row[0] === "六月第二批修补"), "包含第二批名称");
+
+  await stopServer();
+
+  console.log("\n【场景20】修补结果导出——字段筛选+状态过滤组合使用");
+  seedMultiBatchDb();
+  await startServer();
+
+  const combinedFilterRes = await httpRequestCsv("GET", "/export/repair-results?status=repaired&fields=id,rubbingCode,statusText");
+  const combinedFilterParsed = parseCsv(combinedFilterRes.body);
+  assertEqual(combinedFilterParsed.headers.length, 3, "组合筛选后有3列");
+  assertEqual(combinedFilterParsed.rows.length, 3, "按repaired过滤后有3条数据");
+  assert(combinedFilterParsed.rows.every((row) => row[2] === "已修补"), "所有行状态都是已修补");
+  assert(combinedFilterParsed.rows.every((row) => row.length === 3), "每行都是3列");
+
+  await stopServer();
+
+  console.log("\n【场景21】空数据库+字段筛选——CSV结构稳定");
+  seedEmptyDb();
+  await startServer();
+
+  const emptyFieldsRubbingsRes = await httpRequestCsv("GET", "/export/rubbings?fields=code,source");
+  const emptyFieldsRubbingsParsed = parseCsv(emptyFieldsRubbingsRes.body);
+  assertEqual(emptyFieldsRubbingsParsed.headers.length, 2, "空结果+字段筛选仍有2列表头");
+  assertEqual(emptyFieldsRubbingsParsed.rows.length, 0, "空结果没有数据行");
+
+  const emptyFieldsDamagesRes = await httpRequestCsv("GET", "/export/damages?fields=id,position,type");
+  const emptyFieldsDamagesParsed = parseCsv(emptyFieldsDamagesRes.body);
+  assertEqual(emptyFieldsDamagesParsed.headers.length, 3, "空缺损结果+字段筛选仍有3列表头");
+
+  const emptyFieldsBatchesRes = await httpRequestCsv("GET", "/export/batches?fields=name,statusText");
+  const emptyFieldsBatchesParsed = parseCsv(emptyFieldsBatchesRes.body);
+  assertEqual(emptyFieldsBatchesParsed.headers.length, 2, "空批次结果+字段筛选仍有2列表头");
+
+  const emptyFieldsResultsRes = await httpRequestCsv("GET", "/export/repair-results?fields=id,type");
+  const emptyFieldsResultsParsed = parseCsv(emptyFieldsResultsRes.body);
+  assertEqual(emptyFieldsResultsParsed.headers.length, 2, "空修补结果+字段筛选仍有2列表头");
+
+  await stopServer();
+
+  console.log("\n【场景22】全字段导出（不传fields参数）保持原格式不变");
+  seedMultiBatchDb();
+  await startServer();
+
+  const noFieldsRubbingsRes = await httpRequestCsv("GET", "/export/rubbings");
+  const noFieldsRubbingsParsed = parseCsv(noFieldsRubbingsRes.body);
+  assertEqual(noFieldsRubbingsParsed.headers.length, 10, "不传fields时拓片仍有10列（原格式不变）");
+
+  const noFieldsDamagesRes = await httpRequestCsv("GET", "/export/damages");
+  const noFieldsDamagesParsed = parseCsv(noFieldsDamagesRes.body);
+  assertEqual(noFieldsDamagesParsed.headers.length, 16, "不传fields时缺损项仍有16列（原格式不变）");
+
+  const noFieldsBatchesRes = await httpRequestCsv("GET", "/export/batches");
+  const noFieldsBatchesParsed = parseCsv(noFieldsBatchesRes.body);
+  assertEqual(noFieldsBatchesParsed.headers.length, 13, "不传fields时批次仍有13列（原格式不变）");
+
+  const noFieldsResultsRes = await httpRequestCsv("GET", "/export/repair-results");
+  const noFieldsResultsParsed = parseCsv(noFieldsResultsRes.body);
+  assertEqual(noFieldsResultsParsed.headers.length, 21, "不传fields时修补结果仍有21列（原格式不变）");
+
+  await stopServer();
+
+  console.log("\n【场景23】非法字段——多个非法字段同时返回");
+  seedMultiBatchDb();
+  await startServer();
+
+  const multiInvalidRes = await httpRequestCsv("GET", "/export/batches?fields=name,badField1,badField2");
+  const multiInvalidBody = JSON.parse(multiInvalidRes.body);
+  assertEqual(multiInvalidRes.status, 400, "多个非法字段也返回 400");
+  assert(multiInvalidBody.invalidFields.includes("badField1"), "包含第一个非法字段");
+  assert(multiInvalidBody.invalidFields.includes("badField2"), "包含第二个非法字段");
+  assert(multiInvalidBody.invalidFields.length === 2, "返回全部2个非法字段");
+
+  await stopServer();
+
+  console.log("\n【场景24】空fields参数等同于不传（保持全字段）");
+  seedMultiBatchDb();
+  await startServer();
+
+  const emptyFieldsParamRes = await httpRequestCsv("GET", "/export/rubbings?fields=");
+  const emptyFieldsParamParsed = parseCsv(emptyFieldsParamRes.body);
+  assertEqual(emptyFieldsParamParsed.headers.length, 10, "空fields参数仍导出全部10列");
+
+  const spaceFieldsRes = await httpRequestCsv("GET", "/export/rubbings?fields=%20%20");
+  const spaceFieldsParsed = parseCsv(spaceFieldsRes.body);
+  assertEqual(spaceFieldsParsed.headers.length, 10, "空白fields参数仍导出全部10列");
+
+  await stopServer();
+
+  console.log("\n【场景25】health 接口包含 fields 参数文档");
+  seedMultiBatchDb();
+  await startServer();
+
+  const healthRes2 = await httpRequestCsv("GET", "/health");
+  const healthBody2 = JSON.parse(healthRes2.body);
+  assert(healthBody2.routes.some((r) => r.includes("fields=")), "health 路由列表包含 fields 参数");
 
   await stopServer();
 

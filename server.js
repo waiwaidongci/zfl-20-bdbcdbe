@@ -111,10 +111,10 @@ const routes = [
   "GET /dashboard/repair-workbench?type=&rubbingId=&batchId=&responsible=",
   "GET /rubbings/:id/summary",
   "GET /schedules?startDate=&endDate=&status=&responsible=",
-  "GET /export/rubbings?startDate=&endDate=",
-  "GET /export/damages?status=&type=&startDate=&endDate=",
-  "GET /export/batches?status=&startDate=&endDate=",
-  "GET /export/repair-results?status=&type=&startDate=&endDate=",
+  "GET /export/rubbings?startDate=&endDate=&fields=",
+  "GET /export/damages?status=&type=&startDate=&endDate=&fields=",
+  "GET /export/batches?status=&startDate=&endDate=&fields=",
+  "GET /export/repair-results?status=&type=&startDate=&endDate=&fields=",
   "GET /backups",
   "POST /backups",
   "GET /backups/:filename/validate",
@@ -924,6 +924,33 @@ function filterByDateRange(items, startDate, endDate, dateField = "createdAt") {
   });
 }
 
+function parseFieldsParam(fieldsStr) {
+  if (!fieldsStr || typeof fieldsStr !== "string") return null;
+  const trimmed = fieldsStr.trim();
+  if (!trimmed) return null;
+  return trimmed.split(",").map((f) => f.trim()).filter((f) => f.length > 0);
+}
+
+function validateAndFilterHeaders(allHeaders, requestedFields, resourceName) {
+  if (!requestedFields) return allHeaders;
+
+  const validKeys = new Set(allHeaders.map((h) => h.key));
+  const invalidFields = requestedFields.filter((f) => !validKeys.has(f));
+
+  if (invalidFields.length > 0) {
+    const error = new Error(
+      `非法字段：${invalidFields.join(", ")}。${resourceName}可用字段：${allHeaders.map((h) => h.key).join(", ")}`
+    );
+    error.status = 400;
+    error.code = "INVALID_FIELDS";
+    error.invalidFields = invalidFields;
+    error.validFields = allHeaders.map((h) => h.key);
+    throw error;
+  }
+
+  return requestedFields.map((key) => allHeaders.find((h) => h.key === key));
+}
+
 function getStatusText(status) {
   const statusMap = {
     pending: "待修补",
@@ -940,13 +967,14 @@ function getStatusText(status) {
 }
 
 function exportRubbingsCsv(db, filters = {}) {
-  const { startDate, endDate } = filters;
+  const { startDate, endDate, fields } = filters;
   const start = parseDateRange(startDate);
   const end = parseDateRange(endDate, true);
+  const requestedFields = parseFieldsParam(fields);
 
   let rubbings = filterByDateRange(db.rubbings, start, end);
 
-  const headers = [
+  const allHeaders = [
     { key: "id", label: "拓片ID" },
     { key: "code", label: "拓片编号" },
     { key: "source", label: "来源" },
@@ -958,6 +986,8 @@ function exportRubbingsCsv(db, filters = {}) {
     { key: "repairedCount", label: "已修补数" },
     { key: "createdAt", label: "创建时间" }
   ];
+
+  const headers = validateAndFilterHeaders(allHeaders, requestedFields, "拓片");
 
   const rows = rubbings.map((rubbing) => {
     const damages = db.damages.filter((d) => d.rubbingId === rubbing.id);
@@ -979,9 +1009,10 @@ function exportRubbingsCsv(db, filters = {}) {
 }
 
 function exportDamagesCsv(db, filters = {}) {
-  const { status, type, startDate, endDate } = filters;
+  const { status, type, startDate, endDate, fields } = filters;
   const start = parseDateRange(startDate);
   const end = parseDateRange(endDate, true);
+  const requestedFields = parseFieldsParam(fields);
 
   let damages = db.damages.filter((d) => {
     if (status && d.status !== status) return false;
@@ -993,7 +1024,7 @@ function exportDamagesCsv(db, filters = {}) {
   const rubbingMap = new Map(db.rubbings.map((r) => [r.id, r]));
   const batchMap = new Map(db.batches.map((b) => [b.id, b]));
 
-  const headers = [
+  const allHeaders = [
     { key: "id", label: "缺损ID" },
     { key: "rubbingCode", label: "拓片编号" },
     { key: "rubbingSource", label: "拓片来源" },
@@ -1011,6 +1042,8 @@ function exportDamagesCsv(db, filters = {}) {
     { key: "createdAt", label: "创建时间" },
     { key: "repairedAt", label: "修补完成时间" }
   ];
+
+  const headers = validateAndFilterHeaders(allHeaders, requestedFields, "缺损项");
 
   const rows = damages.map((damage) => {
     const rubbing = rubbingMap.get(damage.rubbingId) || {};
@@ -1039,9 +1072,10 @@ function exportDamagesCsv(db, filters = {}) {
 }
 
 function exportBatchesCsv(db, filters = {}) {
-  const { status, startDate, endDate } = filters;
+  const { status, startDate, endDate, fields } = filters;
   const start = parseDateRange(startDate);
   const end = parseDateRange(endDate, true);
+  const requestedFields = parseFieldsParam(fields);
 
   let batches = db.batches.filter((b) => {
     if (status && b.status !== status) return false;
@@ -1049,7 +1083,7 @@ function exportBatchesCsv(db, filters = {}) {
   });
   batches = filterByDateRange(batches, start, end);
 
-  const headers = [
+  const allHeaders = [
     { key: "id", label: "批次ID" },
     { key: "name", label: "批次名称" },
     { key: "statusText", label: "批次状态" },
@@ -1064,6 +1098,8 @@ function exportBatchesCsv(db, filters = {}) {
     { key: "createdAt", label: "创建时间" },
     { key: "completedAt", label: "完成时间" }
   ];
+
+  const headers = validateAndFilterHeaders(allHeaders, requestedFields, "批次");
 
   const rows = batches.map((batch) => {
     const damages = db.damages.filter((d) => batch.damageIds.includes(d.id));
@@ -1088,9 +1124,10 @@ function exportBatchesCsv(db, filters = {}) {
 }
 
 function exportRepairResultsCsv(db, filters = {}) {
-  const { status, type, startDate, endDate } = filters;
+  const { status, type, startDate, endDate, fields } = filters;
   const start = parseDateRange(startDate);
   const end = parseDateRange(endDate, true);
+  const requestedFields = parseFieldsParam(fields);
 
   let damages = db.damages.filter((d) => {
     if (status && d.status !== status) return false;
@@ -1112,7 +1149,7 @@ function exportRepairResultsCsv(db, filters = {}) {
     }
   });
 
-  const headers = [
+  const allHeaders = [
     { key: "id", label: "缺损ID" },
     { key: "rubbingCode", label: "拓片编号" },
     { key: "rubbingSource", label: "拓片来源" },
@@ -1135,6 +1172,8 @@ function exportRepairResultsCsv(db, filters = {}) {
     { key: "createdAt", label: "创建时间" },
     { key: "repairedAt", label: "修补完成时间" }
   ];
+
+  const headers = validateAndFilterHeaders(allHeaders, requestedFields, "修补结果");
 
   const rows = damages.map((damage) => {
     const rubbing = rubbingMap.get(damage.rubbingId) || {};
@@ -2267,9 +2306,19 @@ async function handle(req, res) {
   if (req.method === "GET" && pathname === "/export/rubbings") {
     const startDate = url.searchParams.get("startDate");
     const endDate = url.searchParams.get("endDate");
-    const csv = exportRubbingsCsv(db, { startDate, endDate });
-    const filename = `拓片数据_${new Date().toISOString().slice(0, 10)}.csv`;
-    return sendCsv(res, filename, csv);
+    const fields = url.searchParams.get("fields");
+    try {
+      const csv = exportRubbingsCsv(db, { startDate, endDate, fields });
+      const filename = `拓片数据_${new Date().toISOString().slice(0, 10)}.csv`;
+      return sendCsv(res, filename, csv);
+    } catch (error) {
+      return send(res, error.status || 400, {
+        error: error.message,
+        code: error.code,
+        invalidFields: error.invalidFields || undefined,
+        validFields: error.validFields || undefined
+      });
+    }
   }
 
   if (req.method === "GET" && pathname === "/export/damages") {
@@ -2277,18 +2326,38 @@ async function handle(req, res) {
     const type = url.searchParams.get("type");
     const startDate = url.searchParams.get("startDate");
     const endDate = url.searchParams.get("endDate");
-    const csv = exportDamagesCsv(db, { status, type, startDate, endDate });
-    const filename = `缺损项数据_${new Date().toISOString().slice(0, 10)}.csv`;
-    return sendCsv(res, filename, csv);
+    const fields = url.searchParams.get("fields");
+    try {
+      const csv = exportDamagesCsv(db, { status, type, startDate, endDate, fields });
+      const filename = `缺损项数据_${new Date().toISOString().slice(0, 10)}.csv`;
+      return sendCsv(res, filename, csv);
+    } catch (error) {
+      return send(res, error.status || 400, {
+        error: error.message,
+        code: error.code,
+        invalidFields: error.invalidFields || undefined,
+        validFields: error.validFields || undefined
+      });
+    }
   }
 
   if (req.method === "GET" && pathname === "/export/batches") {
     const status = url.searchParams.get("status");
     const startDate = url.searchParams.get("startDate");
     const endDate = url.searchParams.get("endDate");
-    const csv = exportBatchesCsv(db, { status, startDate, endDate });
-    const filename = `批次数据_${new Date().toISOString().slice(0, 10)}.csv`;
-    return sendCsv(res, filename, csv);
+    const fields = url.searchParams.get("fields");
+    try {
+      const csv = exportBatchesCsv(db, { status, startDate, endDate, fields });
+      const filename = `批次数据_${new Date().toISOString().slice(0, 10)}.csv`;
+      return sendCsv(res, filename, csv);
+    } catch (error) {
+      return send(res, error.status || 400, {
+        error: error.message,
+        code: error.code,
+        invalidFields: error.invalidFields || undefined,
+        validFields: error.validFields || undefined
+      });
+    }
   }
 
   if (req.method === "GET" && pathname === "/export/repair-results") {
@@ -2296,9 +2365,19 @@ async function handle(req, res) {
     const type = url.searchParams.get("type");
     const startDate = url.searchParams.get("startDate");
     const endDate = url.searchParams.get("endDate");
-    const csv = exportRepairResultsCsv(db, { status, type, startDate, endDate });
-    const filename = `修补结果数据_${new Date().toISOString().slice(0, 10)}.csv`;
-    return sendCsv(res, filename, csv);
+    const fields = url.searchParams.get("fields");
+    try {
+      const csv = exportRepairResultsCsv(db, { status, type, startDate, endDate, fields });
+      const filename = `修补结果数据_${new Date().toISOString().slice(0, 10)}.csv`;
+      return sendCsv(res, filename, csv);
+    } catch (error) {
+      return send(res, error.status || 400, {
+        error: error.message,
+        code: error.code,
+        invalidFields: error.invalidFields || undefined,
+        validFields: error.validFields || undefined
+      });
+    }
   }
 
   if (req.method === "GET" && pathname === "/backups") {
