@@ -1,74 +1,96 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "meta": {
-    "createdAt": "2026-06-01T00:00:00.000Z",
-    "lastModifiedAt": "2026-06-01T00:00:00.000Z",
+    "createdAt": "2026-06-18T06:32:44.513Z",
+    "lastModifiedAt": "2026-06-18T06:32:44.513Z",
     "migrationHistory": [],
     "dataStatistics": {
       "rubbings": 1,
       "damages": 2,
-      "batches": 0,
+      "batches": 1,
       "repairImages": 0,
-      "batchSnapshots": 0
+      "batchSnapshots": 0,
+      "auditTrailEvents": 0
     }
   },
   "entities": {
     "rubbings": [
       {
-        "id": "rubbing_demo",
+        "id": "r1",
         "code": "TP-清-014",
         "source": "地方碑刻残页",
         "paperSize": "42x68cm",
-        "note": "边缘有旧折痕",
+        "note": "",
         "createdAt": "2026-01-01T00:00:00.000Z"
       }
     ],
     "damages": [
       {
-        "id": "damage_demo_1",
-        "rubbingId": "rubbing_demo",
-        "position": "左上角第3列题字旁",
+        "id": "d1",
+        "rubbingId": "r1",
+        "position": "左上角",
         "type": "虫蛀孔",
-        "beforePhotoUrl": "https://example.local/before-014-1.jpg",
+        "beforePhotoUrl": "x.jpg",
         "afterPhotoUrl": "",
-        "status": "pending",
+        "status": "in_repair",
         "repairNote": "",
-        "batchId": null,
-        "reviewStatus": "approved",
-        "rejectReason": "",
-        "reviewedBy": "系统初始化",
-        "reviewedAt": "2026-01-01T00:00:00.000Z",
+        "batchId": "b1",
         "createdAt": "2026-01-01T00:00:00.000Z",
-        "repairedAt": null
+        "repairedAt": null,
+        "reviewStatus": "approved",
+        "rejectReason": ""
       },
       {
-        "id": "damage_demo_2",
-        "rubbingId": "rubbing_demo",
-        "position": "下边缘中央",
+        "id": "d2",
+        "rubbingId": "r1",
+        "position": "下边缘",
         "type": "撕裂",
-        "beforePhotoUrl": "https://example.local/before-014-2.jpg",
+        "beforePhotoUrl": "x.jpg",
         "afterPhotoUrl": "",
-        "status": "pending",
+        "status": "in_repair",
         "repairNote": "",
-        "batchId": null,
-        "reviewStatus": "review_pending",
-        "rejectReason": "",
-        "reviewedBy": null,
-        "reviewedAt": null,
+        "batchId": "b1",
         "createdAt": "2026-01-01T00:00:00.000Z",
-        "repairedAt": null
+        "repairedAt": null,
+        "reviewStatus": "approved",
+        "rejectReason": ""
       }
     ],
-    "batches": [],
+    "batches": [
+      {
+        "id": "b1",
+        "name": "六月修补批次",
+        "status": "open",
+        "damageIds": [
+          "d1",
+          "d2"
+        ],
+        "note": "",
+        "createdAt": "2026-06-01T00:00:00.000Z",
+        "completedAt": null,
+        "plannedStartAt": "2026-06-10T00:00:00.000Z",
+        "plannedEndAt": "2026-06-15T00:00:00.000Z",
+        "responsible": "张师傅"
+      }
+    ],
     "repairImages": [],
     "batchSnapshots": []
   },
   "imageArchive": {
-    "archivedImages": [],
-    "archiveStats": {
+    "summary": {
       "totalArchived": 0,
+      "totalByStage": {
+        "before_repair": 0,
+        "during_repair": 0,
+        "after_repair": 0
+      },
+      "byDamageId": {},
+      "byBatchId": {},
+      "byMonth": {},
       "lastArchivedAt": null,
+      "firstArchivedAt": null,
       "storagePath": "./data/image-archive"
     }
-  }
+  },
+  "auditTrail": []
 }

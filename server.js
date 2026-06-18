@@ -102,6 +102,7 @@ const initialData = {
 
 const routes = [
   "GET /health",
+  "GET /schema-version",
   "GET /rubbings",
   "POST /rubbings",
   "GET /rubbings/:id/damages",
@@ -132,7 +133,8 @@ const routes = [
   "GET /backups/:filename/validate",
   "GET /backups/:filename/diff",
   "POST /backups/:filename/restore",
-  "GET /audit-logs?actionType=&targetId=&targetType=&startDate=&endDate=&success="
+  "GET /audit-logs?actionType=&targetId=&targetType=&startDate=&endDate=&success=",
+  "GET /audit-trail?eventType=&targetId=&targetType=&startDate=&endDate=&actor="
 ];
 
 async function ensureDb() {
@@ -159,7 +161,7 @@ async function ensureDb() {
 
 function unwrapDbData(raw) {
   if (!raw || typeof raw !== "object") {
-    return { rubbings: [], damages: [], batches: [], repairImages: [], batchSnapshots: [] };
+    return { rubbings: [], damages: [], batches: [], repairImages: [], batchSnapshots: [], auditTrail: [] };
   }
   if (typeof raw.schemaVersion === "number" && raw.entities) {
     return {
@@ -167,11 +169,13 @@ function unwrapDbData(raw) {
       damages: raw.entities.damages || [],
       batches: raw.entities.batches || [],
       repairImages: raw.entities.repairImages || [],
-      batchSnapshots: raw.entities.batchSnapshots || []
+      batchSnapshots: raw.entities.batchSnapshots || [],
+      auditTrail: raw.auditTrail || []
     };
   }
   if (!raw.repairImages) raw.repairImages = [];
   if (!raw.batchSnapshots) raw.batchSnapshots = [];
+  if (!raw.auditTrail) raw.auditTrail = [];
   return raw;
 }
 
@@ -185,6 +189,52 @@ async function readDb() {
     return { rubbings: [], damages: [], batches: [], repairImages: [], batchSnapshots: [] };
   }
   return unwrapDbData(raw);
+}
+
+function makeAuditEventId() {
+  return `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function writeAuditTrailEvent(event) {
+  let raw;
+  try {
+    raw = JSON.parse(await readFile(DB_FILE, "utf8"));
+  } catch (error) {
+    console.warn(`[writeAuditTrailEvent] 读取数据库失败，跳过事件写入: ${error.message}`);
+    return null;
+  }
+
+  if (!raw || typeof raw !== "object" || typeof raw.schemaVersion !== "number" || raw.schemaVersion < 3) {
+    return null;
+  }
+
+  if (!Array.isArray(raw.auditTrail)) {
+    raw.auditTrail = [];
+  }
+
+  const fullEvent = {
+    id: makeAuditEventId(),
+    eventType: event.eventType,
+    targetType: event.targetType || null,
+    targetId: event.targetId || null,
+    timestamp: new Date().toISOString(),
+    actor: event.actor || null,
+    oldValues: event.oldValues || null,
+    newValues: event.newValues || null,
+    reason: event.reason || null,
+    metadata: event.metadata || {}
+  };
+
+  raw.auditTrail.push(fullEvent);
+  raw.meta.dataStatistics.auditTrailEvents = raw.auditTrail.length;
+
+  try {
+    await writeFile(DB_FILE, JSON.stringify(raw, null, 2));
+    return fullEvent;
+  } catch (error) {
+    console.warn(`[writeAuditTrailEvent] 写入事件失败: ${error.message}`);
+    return null;
+  }
 }
 
 async function writeDb(data) {
@@ -203,6 +253,7 @@ async function writeDb(data) {
 
   let toWrite;
   if (raw && typeof raw === "object" && typeof raw.schemaVersion === "number" && raw.entities) {
+    const version = raw.schemaVersion;
     raw.entities = {
       rubbings: data.rubbings || [],
       damages: data.damages || [],
@@ -211,16 +262,36 @@ async function writeDb(data) {
       batchSnapshots: data.batchSnapshots || []
     };
     raw.meta.lastModifiedAt = new Date().toISOString();
-    raw.meta.dataStatistics = {
-      rubbings: raw.entities.rubbings.length,
-      damages: raw.entities.damages.length,
-      batches: raw.entities.batches.length,
-      repairImages: raw.entities.repairImages.length,
-      batchSnapshots: raw.entities.batchSnapshots.length
-    };
-    const v2Errors = migrator.validateV2Structure(raw);
-    if (v2Errors.length > 0) {
-      throw new Error(`写入被阻断：v2 结构校验失败 - ${v2Errors.join("; ")}`);
+
+    if (version >= 3) {
+      raw.meta.dataStatistics = {
+        rubbings: raw.entities.rubbings.length,
+        damages: raw.entities.damages.length,
+        batches: raw.entities.batches.length,
+        repairImages: raw.entities.repairImages.length,
+        batchSnapshots: raw.entities.batchSnapshots.length,
+        auditTrailEvents: (raw.auditTrail || []).length
+      };
+      raw.imageArchive.summary = migrator.rebuildImageArchiveStats(raw.entities);
+      if (!Array.isArray(raw.auditTrail)) {
+        raw.auditTrail = [];
+      }
+      const v3Errors = migrator.validateV3Structure(raw);
+      if (v3Errors.length > 0) {
+        throw new Error(`写入被阻断：v3 结构校验失败 - ${v3Errors.join("; ")}`);
+      }
+    } else {
+      raw.meta.dataStatistics = {
+        rubbings: raw.entities.rubbings.length,
+        damages: raw.entities.damages.length,
+        batches: raw.entities.batches.length,
+        repairImages: raw.entities.repairImages.length,
+        batchSnapshots: raw.entities.batchSnapshots.length
+      };
+      const v2Errors = migrator.validateV2Structure(raw);
+      if (v2Errors.length > 0) {
+        throw new Error(`写入被阻断：v2 结构校验失败 - ${v2Errors.join("; ")}`);
+      }
     }
     toWrite = raw;
   } else {
@@ -349,6 +420,40 @@ async function executeWithAudit({ actionType, targetType, targetId, oldValues, n
       newValues: newValues || null,
       extra: extra || null
     });
+
+    const eventTypeMap = {
+      create_rubbing: "rubbing_created",
+      register_damage: "damage_registered",
+      update_damage: "damage_updated",
+      approve_damage: "damage_approved",
+      reject_damage: "damage_rejected",
+      create_batch: "batch_created",
+      complete_batch: "batch_completed",
+      rollback_batch: "batch_rolled_back",
+      partial_rollback_batch: "batch_partially_rolled_back",
+      archive_images: "images_archived",
+      restore_backup: "backup_restored",
+      import_confirm: "data_imported"
+    };
+
+    const reason = (newValues && newValues.rejectReason) || (extra && extra.reason) || null;
+    const actor = (newValues && newValues.reviewedBy) || (extra && extra.actor) || null;
+
+    await writeAuditTrailEvent({
+      eventType: eventTypeMap[actionType] || actionType || "unknown_event",
+      targetType: targetType || null,
+      targetId: targetId || null,
+      actor,
+      oldValues: oldValues || null,
+      newValues: newValues || null,
+      reason,
+      metadata: {
+        changeSummary,
+        success,
+        extra: extra || null
+      }
+    });
+
     return send(res, statusCode, businessResult);
   } catch (auditError) {
     return send(res, 500, {
@@ -400,6 +505,7 @@ function validateDataStructure(data) {
     for (const key of requiredKeys) {
       if (!Array.isArray(data.entities[key])) return false;
     }
+    if (data.schemaVersion >= 3 && !Array.isArray(data.auditTrail)) return false;
     return true;
   }
   const requiredKeys = ["rubbings", "damages", "batches", "repairImages", "batchSnapshots"];
@@ -411,13 +517,17 @@ function validateDataStructure(data) {
 
 function getDataCounts(data) {
   if (data && typeof data === "object" && typeof data.schemaVersion === "number" && data.entities) {
-    return {
+    const counts = {
       rubbings: (data.entities.rubbings || []).length,
       damages: (data.entities.damages || []).length,
       batches: (data.entities.batches || []).length,
       repairImages: (data.entities.repairImages || []).length,
       batchSnapshots: (data.entities.batchSnapshots || []).length
     };
+    if (data.schemaVersion >= 3) {
+      counts.auditTrailEvents = (data.auditTrail || []).length;
+    }
+    return counts;
   }
   return {
     rubbings: (data?.rubbings || []).length,
@@ -640,20 +750,25 @@ function readBackupEntities(backupData) {
     return null;
   }
   if (typeof backupData.schemaVersion === "number" && backupData.entities) {
-    return {
+    const result = {
       rubbings: backupData.entities.rubbings || [],
       damages: backupData.entities.damages || [],
       batches: backupData.entities.batches || [],
       repairImages: backupData.entities.repairImages || [],
       batchSnapshots: backupData.entities.batchSnapshots || []
     };
+    if (backupData.schemaVersion >= 3) {
+      result.auditTrail = backupData.auditTrail || [];
+    }
+    return result;
   }
   return {
     rubbings: backupData.rubbings || [],
     damages: backupData.damages || [],
     batches: backupData.batches || [],
     repairImages: backupData.repairImages || [],
-    batchSnapshots: backupData.batchSnapshots || []
+    batchSnapshots: backupData.batchSnapshots || [],
+    auditTrail: backupData.auditTrail || []
   };
 }
 
@@ -663,6 +778,9 @@ function detectBackupStructure(backup) {
   }
   const data = backup.data;
   if (typeof data.schemaVersion === "number") {
+    if (data.schemaVersion === 3 && data.entities && Array.isArray(data.auditTrail)) {
+      return { version: 3, structure: "v3", readable: true };
+    }
     if (data.schemaVersion === 2 && data.entities) {
       return { version: 2, structure: "v2", readable: true };
     }
@@ -830,6 +948,9 @@ function normalizeRepairStatus(status) {
 }
 
 function normalizeReviewStatus(status) {
+  if (status === undefined || status === null) {
+    return "approved";
+  }
   return VALID_REVIEW_STATUSES.includes(status) ? status : "review_pending";
 }
 
@@ -1464,6 +1585,23 @@ async function handle(req, res) {
 
   if (req.method === "GET" && pathname === "/health") {
     return send(res, 200, { ok: true, service: "rubbing-repair-api", routes });
+  }
+
+  if (req.method === "GET" && pathname === "/schema-version") {
+    let raw;
+    try {
+      raw = JSON.parse(await readFile(DB_FILE, "utf8"));
+    } catch (e) {
+      return send(res, 200, { schemaVersion: null, currentSupported: migrator.CURRENT_SCHEMA_VERSION });
+    }
+    return send(res, 200, {
+      schemaVersion: raw.schemaVersion || 0,
+      currentSupported: migrator.CURRENT_SCHEMA_VERSION,
+      isLatest: raw.schemaVersion === migrator.CURRENT_SCHEMA_VERSION,
+      meta: raw.meta || null,
+      imageArchiveSummary: raw.imageArchive?.summary || null,
+      auditTrailCount: (raw.auditTrail || []).length
+    });
   }
 
   if (req.method === "GET" && pathname === "/rubbings") {
@@ -2736,6 +2874,46 @@ async function handle(req, res) {
     return send(res, 200, { data: filtered, total: filtered.length });
   }
 
+  if (req.method === "GET" && pathname === "/audit-trail") {
+    const eventType = url.searchParams.get("eventType");
+    const targetId = url.searchParams.get("targetId");
+    const targetType = url.searchParams.get("targetType");
+    const startDate = url.searchParams.get("startDate");
+    const endDate = url.searchParams.get("endDate");
+    const actor = url.searchParams.get("actor");
+
+    let rawDb;
+    try {
+      rawDb = JSON.parse(await readFile(DB_FILE, "utf8"));
+    } catch (e) {
+      return send(res, 200, { data: [], total: 0, schemaVersion: null });
+    }
+
+    const auditTrail = rawDb.auditTrail || [];
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+
+    const filtered = auditTrail.filter((entry) => {
+      if (eventType && entry.eventType !== eventType) return false;
+      if (targetId && entry.targetId !== targetId) return false;
+      if (targetType && entry.targetType !== targetType) return false;
+      if (actor && entry.actor !== actor) return false;
+      if (start || end) {
+        const entryTime = new Date(entry.timestamp);
+        if (start && entryTime < start) return false;
+        if (end && entryTime > end) return false;
+      }
+      return true;
+    }).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    return send(res, 200, {
+      data: filtered,
+      total: filtered.length,
+      schemaVersion: rawDb.schemaVersion || 0,
+      hasV3Structure: rawDb.schemaVersion >= 3
+    });
+  }
+
   return send(res, 404, { error: "接口不存在", routes });
 }
 
@@ -2787,6 +2965,16 @@ const server = http.createServer((req, res) => {
         }
         startupMode = "fatal";
         startupWarning = "v2 结构损坏，无法安全启动";
+        break;
+      case "V3_STRUCTURE_CORRUPTED":
+        console.error(`[数据迁移] 错误: v3 结构校验失败，数据已损坏，拒绝启动`);
+        if (migrationError.validationErrors) {
+          migrationError.validationErrors.forEach((e, i) => {
+            console.error(`  ${i + 1}. ${e}`);
+          });
+        }
+        startupMode = "fatal";
+        startupWarning = "v3 结构损坏，无法安全启动";
         break;
       case "INVALID_STRUCTURE":
         console.error(`[数据迁移] 错误: 数据结构无法识别，拒绝启动`);

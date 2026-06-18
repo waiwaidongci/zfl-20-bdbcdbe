@@ -292,3 +292,197 @@ curl "http://127.0.0.1:3020/dashboard/repair-workbench?responsible=张工"
 ```
 
 > 说明：没有设置 `responsible` 字段的旧批次在筛选时不会被过滤掉（不传 `responsible` 参数时返回全部），在看板聚合统计中统一归类为"未分配"。
+
+## 数据结构版本
+
+本项目使用版本化数据结构，支持从 v0/v1/v2 平滑升级到最新版本（v3）。
+
+| 版本 | 主要特性 |
+|---|---|
+| v0 | 扁平结构，直接在根目录存放 rubbings/damages/batches 等数组 |
+| v1 | 引入 schemaVersion 字段，兼容新旧格式混合 |
+| v2 | 实体与元数据分离（entities/meta），引入 imageArchive 空壳 |
+| **v3** | **结构化审计追踪（auditTrail）、增强型影像归档统计（imageArchive）** |
+
+### v3 新特性
+
+#### 1. 结构化审计追踪（auditTrail）
+
+v3 新增 `auditTrail` 字段，用于记录所有关键操作的历史事件：
+
+- `damage_registered` - 缺损登记
+- `damage_approved` / `damage_rejected` - 缺损审核通过/驳回
+- `damage_updated` - 缺损信息更新
+- `batch_created` / `batch_completed` - 批次创建/完成
+- `batch_rolled_back` / `batch_partially_rolled_back` - 批次全量/部分回滚
+- `images_archived` - 影像归档
+- `backup_restored` - 备份恢复
+- `data_imported` - 数据导入
+
+每个事件包含：
+```json
+{
+  "id": "evt_xxx",
+  "eventType": "damage_approved",
+  "targetType": "damage",
+  "targetId": "damage_demo_1",
+  "timestamp": "2025-06-15T10:30:00.000Z",
+  "actor": "张工",
+  "oldValues": { "reviewStatus": "review_pending" },
+  "newValues": { "reviewStatus": "approved" },
+  "reason": null,
+  "metadata": { "changeSummary": "...", "success": true }
+}
+```
+
+#### 2. 增强型影像归档统计（imageArchive）
+
+v3 将 `imageArchive` 从空壳升级为可维护的归档统计：
+
+```json
+{
+  "summary": {
+    "totalArchived": 42,
+    "totalByStage": {
+      "before_repair": 20,
+      "during_repair": 5,
+      "after_repair": 17
+    },
+    "byDamageId": { "damage_demo_1": 3, "damage_demo_2": 5 },
+    "byBatchId": { "batch_001": 8 },
+    "byMonth": { "2025-06": 15 },
+    "lastArchivedAt": "2025-06-15T14:30:00.000Z",
+    "firstArchivedAt": "2025-01-10T09:00:00.000Z",
+    "storagePath": "./data/image-archive"
+  }
+}
+```
+
+归档统计在每次写入时自动重建，确保数据一致性。
+
+### 数据迁移
+
+#### 自动迁移
+
+启动服务时会自动检测并执行数据迁移：
+
+```bash
+PORT=3020 node server.js
+```
+
+迁移过程包含：
+1. 自动备份原始数据到 `data/backups/` 目录
+2. 执行版本升级（v0→v1→v2→v3）
+3. 迁移失败自动回滚
+4. 从实体字段和 audit-logs.json 重建 auditTrail 历史
+
+#### 手动迁移
+
+```bash
+# 查看迁移状态
+node data-migrator.js status
+
+# 执行迁移（自动备份）
+node data-migrator.js migrate
+
+# 强制重新迁移
+node data-migrator.js migrate --force
+
+# 仅验证结构
+node data-migrator.js validate
+
+# 列出备份
+node data-migrator.js backups
+```
+
+#### 迁移安全保障
+
+- **自动备份**：迁移前自动创建完整备份
+- **原子写入**：使用临时文件 + 重命名确保写入原子性
+- **失败回滚**：迁移过程中任何错误自动回滚到备份
+- **结构校验**：迁移前后执行完整结构校验
+- **冲突检测**：迁移时检测并报告潜在数据冲突
+
+### v3 新增接口
+
+#### 查看当前数据结构版本
+
+```bash
+curl http://127.0.0.1:3020/schema-version
+```
+
+返回：
+```json
+{
+  "schemaVersion": 3,
+  "currentSupported": 3,
+  "isLatest": true,
+  "meta": { ... },
+  "imageArchiveSummary": { ... },
+  "auditTrailCount": 156
+}
+```
+
+#### 查询结构化审计追踪
+
+```bash
+# 全部事件
+curl http://127.0.0.1:3020/audit-trail
+
+# 按事件类型筛选
+curl "http://127.0.0.1:3020/audit-trail?eventType=damage_approved"
+
+# 按目标ID筛选
+curl "http://127.0.0.1:3020/audit-trail?targetId=damage_demo_1"
+
+# 按时间范围筛选
+curl "http://127.0.0.1:3020/audit-trail?startDate=2025-06-01&endDate=2025-06-30"
+
+# 按操作人筛选
+curl "http://127.0.0.1:3020/audit-trail?actor=张工"
+```
+
+### v2 向后兼容
+
+v3 完全保留 v2 实体读取兼容性：
+- 旧版 API 调用方式完全不变
+- `unwrapDbData` 透明处理 v2/v3 格式转换
+- 非 v3 数据库上 `writeAuditTrailEvent` 静默返回 null，不影响业务
+- test-helper.js 自动检测版本，支持 v2/v3 混合测试
+
+### 完整接口列表
+
+- `GET /health`
+- `GET /schema-version`
+- `GET /rubbings`
+- `POST /rubbings`
+- `GET /rubbings/:id/damages`
+- `POST /rubbings/:id/damages`
+- `GET /damages?status=&type=&reviewStatus=`
+- `PATCH /damages/:id`
+- `POST /damages/:id/approve`
+- `POST /damages/:id/reject`
+- `GET /damages/:id/images`
+- `POST /damages/:id/images`
+- `GET /batches?status=&responsible=`
+- `POST /batches`
+- `GET /batches/:id`
+- `POST /batches/:id/complete`
+- `POST /batches/:id/rollback`
+- `POST /batches/:id/rollback {damageIds} (partial)`
+- `POST /import/precheck`
+- `POST /import/confirm`
+- `GET /dashboard/repair-workbench?type=&rubbingId=&batchId=&responsible=`
+- `GET /rubbings/:id/summary`
+- `GET /schedules?startDate=&endDate=&status=&responsible=`
+- `GET /export/rubbings?startDate=&endDate=&fields=`
+- `GET /export/damages?status=&type=&startDate=&endDate=&fields=`
+- `GET /export/batches?status=&startDate=&endDate=&fields=`
+- `GET /export/repair-results?status=&type=&startDate=&endDate=&fields=`
+- `GET /backups`
+- `POST /backups`
+- `GET /backups/:filename/validate`
+- `GET /backups/:filename/diff`
+- `POST /backups/:filename/restore`
+- `GET /audit-logs?actionType=&targetId=&targetType=&startDate=&endDate=&success=`
+- `GET /audit-trail?eventType=&targetId=&targetType=&startDate=&endDate=&actor=`

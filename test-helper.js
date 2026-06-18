@@ -12,14 +12,33 @@ function ensureDataDir() {
 }
 
 function isV2Structure(data) {
-  return data && typeof data === "object" && typeof data.schemaVersion === "number" && data.entities;
+  return data && typeof data === "object" && typeof data.schemaVersion === "number" && data.schemaVersion === 2 && data.entities;
+}
+
+function isV3Structure(data) {
+  return data && typeof data === "object" && typeof data.schemaVersion === "number" && data.schemaVersion >= 3 && data.entities && Array.isArray(data.auditTrail);
+}
+
+function isVersionedStructure(data) {
+  return isV2Structure(data) || isV3Structure(data);
 }
 
 function flattenData(data) {
-  if (isV2Structure(data)) {
-    return data.entities;
+  if (isVersionedStructure(data)) {
+    const result = { ...data.entities };
+    if (data.auditTrail) {
+      result.auditTrail = data.auditTrail;
+    }
+    return result;
   }
   return data;
+}
+
+function detectDbVersion(data) {
+  if (isV3Structure(data)) return 3;
+  if (isV2Structure(data)) return 2;
+  if (data && typeof data === "object" && typeof data.schemaVersion === "number") return data.schemaVersion;
+  return 0;
 }
 
 function wrapInV2(data) {
@@ -56,6 +75,43 @@ function wrapInV2(data) {
   };
 }
 
+function wrapInV3(data) {
+  const now = new Date().toISOString();
+  return {
+    schemaVersion: 3,
+    meta: {
+      createdAt: now,
+      lastModifiedAt: now,
+      migrationHistory: [],
+      dataStatistics: {
+        rubbings: (data.rubbings || []).length,
+        damages: (data.damages || []).length,
+        batches: (data.batches || []).length,
+        repairImages: (data.repairImages || []).length,
+        batchSnapshots: (data.batchSnapshots || []).length,
+        auditTrailEvents: (data.auditTrail || []).length
+      }
+    },
+    entities: {
+      rubbings: data.rubbings || [],
+      damages: data.damages || [],
+      batches: data.batches || [],
+      repairImages: data.repairImages || [],
+      batchSnapshots: data.batchSnapshots || []
+    },
+    imageArchive: {
+      summary: migrator.rebuildImageArchiveStats({
+        rubbings: data.rubbings || [],
+        damages: data.damages || [],
+        batches: data.batches || [],
+        repairImages: data.repairImages || [],
+        batchSnapshots: data.batchSnapshots || []
+      })
+    },
+    auditTrail: data.auditTrail || []
+  };
+}
+
 function readDb() {
   if (!fs.existsSync(DB_FILE)) {
     return null;
@@ -70,15 +126,57 @@ function readDb() {
   return flattenData(raw);
 }
 
-function writeDb(data) {
+function getDefaultWriteVersion() {
+  if (fs.existsSync(DB_FILE)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+      return detectDbVersion(raw);
+    } catch (e) {
+      return migrator.CURRENT_SCHEMA_VERSION;
+    }
+  }
+  return migrator.CURRENT_SCHEMA_VERSION;
+}
+
+function writeDb(data, options = {}) {
   ensureDataDir();
-  const toWrite = isV2Structure(data) ? data : wrapInV2(data);
-  if (isV2Structure(toWrite)) {
+
+  let toWrite;
+  if (options.raw) {
+    toWrite = data;
+  } else if (isVersionedStructure(data)) {
+    toWrite = data;
+  } else {
+    const targetVersion = options.targetVersion || getDefaultWriteVersion();
+    if (targetVersion >= 3) {
+      toWrite = wrapInV3(data);
+    } else {
+      toWrite = wrapInV2(data);
+    }
+  }
+
+  const version = detectDbVersion(toWrite);
+  if (version >= 3) {
+    toWrite.meta.dataStatistics = {
+      rubbings: toWrite.entities.rubbings.length,
+      damages: toWrite.entities.damages.length,
+      batches: toWrite.entities.batches.length,
+      repairImages: toWrite.entities.repairImages.length,
+      batchSnapshots: toWrite.entities.batchSnapshots.length,
+      auditTrailEvents: (toWrite.auditTrail || []).length
+    };
+    toWrite.imageArchive.summary = migrator.rebuildImageArchiveStats(toWrite.entities);
+    const v3Errors = migrator.validateV3Structure(toWrite);
+    if (v3Errors.length > 0) {
+      throw new Error(`写入被阻断：v3 结构校验失败 - ${v3Errors.join("; ")}`);
+    }
+  } else if (version === 2) {
     const v2Errors = migrator.validateV2Structure(toWrite);
     if (v2Errors.length > 0) {
       throw new Error(`写入被阻断：v2 结构校验失败 - ${v2Errors.join("; ")}`);
     }
   }
+
   const tempFile = path.join(path.dirname(DB_FILE), `.db_test_${Date.now()}.json`);
   try {
     fs.writeFileSync(tempFile, JSON.stringify(toWrite, null, 2));
@@ -130,8 +228,13 @@ function restoreDb(backupFile) {
 module.exports = {
   DB_FILE,
   isV2Structure,
+  isV3Structure,
+  isVersionedStructure,
   flattenData,
   wrapInV2,
+  wrapInV3,
+  detectDbVersion,
+  getDefaultWriteVersion,
   readDb,
   writeDb,
   backupDb,

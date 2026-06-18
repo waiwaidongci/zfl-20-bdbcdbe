@@ -20,8 +20,8 @@ function restoreDb() {
   testHelper.restoreDb(BACKUP_FILE);
 }
 
-function writeDb(data) {
-  testHelper.writeDb(data);
+function writeDb(data, options = {}) {
+  testHelper.writeDb(data, options);
 }
 
 function findAvailablePort() {
@@ -168,7 +168,7 @@ function seedOldFormatDb() {
     ],
     batches: [],
     repairImages: []
-  });
+  }, { raw: true });
 }
 
 function parseCsv(csvText) {

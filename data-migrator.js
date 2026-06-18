@@ -1,7 +1,7 @@
 const { readFile, writeFile, mkdir, readdir, stat, copyFile, unlink, rename } = require("fs/promises");
 const path = require("path");
 
-const CURRENT_SCHEMA_VERSION = 2;
+const CURRENT_SCHEMA_VERSION = 3;
 const MIN_SUPPORTED_VERSION = 0;
 
 const DB_FILE = path.join(__dirname, "data", "db.json");
@@ -69,7 +69,10 @@ function validateVersionedStructure(data, version) {
   if (version === 2) {
     return validateV2Structure(data);
   }
-  if (version > 2) {
+  if (version === 3) {
+    return validateV3Structure(data);
+  }
+  if (version > 3) {
     errors.push(`未知版本 v${version}，超出当前支持范围`);
   }
   return errors;
@@ -146,6 +149,111 @@ function validateV2Structure(data) {
     if (!data.imageArchive.archiveStats || typeof data.imageArchive.archiveStats !== "object") {
       errors.push("缺少 imageArchive.archiveStats");
     }
+  }
+  return errors;
+}
+
+function buildV3EmptyStructure() {
+  return {
+    schemaVersion: 3,
+    meta: {
+      createdAt: null,
+      lastModifiedAt: null,
+      migrationHistory: [],
+      dataStatistics: {
+        rubbings: 0,
+        damages: 0,
+        batches: 0,
+        repairImages: 0,
+        batchSnapshots: 0,
+        auditTrailEvents: 0
+      }
+    },
+    entities: {
+      rubbings: [],
+      damages: [],
+      batches: [],
+      repairImages: [],
+      batchSnapshots: []
+    },
+    imageArchive: {
+      summary: {
+        totalArchived: 0,
+        totalByStage: {
+          before_repair: 0,
+          during_repair: 0,
+          after_repair: 0
+        },
+        byDamageId: {},
+        byBatchId: {},
+        byMonth: {},
+        lastArchivedAt: null,
+        firstArchivedAt: null,
+        storagePath: "./data/image-archive"
+      }
+    },
+    auditTrail: []
+  };
+}
+
+function validateV3Structure(data) {
+  const errors = [];
+  if (!data || typeof data !== "object") {
+    errors.push("根节点不是对象");
+    return errors;
+  }
+  if (data.schemaVersion !== 3) {
+    errors.push(`schemaVersion 应为 3，实际为 ${data.schemaVersion}`);
+  }
+  if (!data.meta || typeof data.meta !== "object") {
+    errors.push("缺少 meta 字段");
+  } else {
+    if (!Array.isArray(data.meta.migrationHistory)) {
+      errors.push("meta.migrationHistory 不是数组");
+    }
+    if (!data.meta.dataStatistics || typeof data.meta.dataStatistics !== "object") {
+      errors.push("缺少 meta.dataStatistics");
+    }
+    if (data.meta.dataStatistics.auditTrailEvents === undefined) {
+      errors.push("meta.dataStatistics 缺少 auditTrailEvents 统计");
+    }
+  }
+  if (!data.entities || typeof data.entities !== "object") {
+    errors.push("缺少 entities 字段");
+  } else {
+    const entityKeys = ["rubbings", "damages", "batches", "repairImages", "batchSnapshots"];
+    for (const k of entityKeys) {
+      if (!Array.isArray(data.entities[k])) {
+        errors.push(`entities.${k} 不是数组`);
+      }
+    }
+  }
+  if (!data.imageArchive || typeof data.imageArchive !== "object") {
+    errors.push("缺少 imageArchive 字段");
+  } else {
+    if (!data.imageArchive.summary || typeof data.imageArchive.summary !== "object") {
+      errors.push("缺少 imageArchive.summary");
+    } else {
+      const summary = data.imageArchive.summary;
+      if (typeof summary.totalArchived !== "number") {
+        errors.push("imageArchive.summary.totalArchived 不是数字");
+      }
+      if (!summary.totalByStage || typeof summary.totalByStage !== "object") {
+        errors.push("缺少 imageArchive.summary.totalByStage");
+      }
+      if (!summary.byDamageId || typeof summary.byDamageId !== "object") {
+        errors.push("缺少 imageArchive.summary.byDamageId");
+      }
+      if (!summary.byBatchId || typeof summary.byBatchId !== "object") {
+        errors.push("缺少 imageArchive.summary.byBatchId");
+      }
+      if (!summary.byMonth || typeof summary.byMonth !== "object") {
+        errors.push("缺少 imageArchive.summary.byMonth");
+      }
+    }
+  }
+  if (!Array.isArray(data.auditTrail)) {
+    errors.push("auditTrail 不是数组");
   }
   return errors;
 }
@@ -367,6 +475,280 @@ function migrateV1ToV2(oldData, migrationMeta) {
   return newStructure;
 }
 
+function rebuildImageArchiveStats(entities) {
+  const repairImages = entities.repairImages || [];
+  const damages = entities.damages || [];
+  const damageBatchMap = new Map();
+  damages.forEach((d) => {
+    if (d.batchId) {
+      damageBatchMap.set(d.id, d.batchId);
+    }
+  });
+
+  const summary = {
+    totalArchived: repairImages.length,
+    totalByStage: {
+      before_repair: 0,
+      during_repair: 0,
+      after_repair: 0
+    },
+    byDamageId: {},
+    byBatchId: {},
+    byMonth: {},
+    lastArchivedAt: null,
+    firstArchivedAt: null,
+    storagePath: "./data/image-archive"
+  };
+
+  let earliest = null;
+  let latest = null;
+
+  repairImages.forEach((img) => {
+    if (img.stage && summary.totalByStage[img.stage] !== undefined) {
+      summary.totalByStage[img.stage] += 1;
+    }
+
+    if (img.damageId) {
+      if (!summary.byDamageId[img.damageId]) {
+        summary.byDamageId[img.damageId] = {
+          total: 0,
+          byStage: { before_repair: 0, during_repair: 0, after_repair: 0 }
+        };
+      }
+      summary.byDamageId[img.damageId].total += 1;
+      if (img.stage && summary.byDamageId[img.damageId].byStage[img.stage] !== undefined) {
+        summary.byDamageId[img.damageId].byStage[img.stage] += 1;
+      }
+
+      const batchId = damageBatchMap.get(img.damageId);
+      if (batchId) {
+        if (!summary.byBatchId[batchId]) {
+          summary.byBatchId[batchId] = {
+            total: 0,
+            byStage: { before_repair: 0, during_repair: 0, after_repair: 0 }
+          };
+        }
+        summary.byBatchId[batchId].total += 1;
+        if (img.stage && summary.byBatchId[batchId].byStage[img.stage] !== undefined) {
+          summary.byBatchId[batchId].byStage[img.stage] += 1;
+        }
+      }
+    }
+
+    const createdAt = img.createdAt || img.capturedAt;
+    if (createdAt) {
+      const d = new Date(createdAt);
+      if (!isNaN(d.getTime())) {
+        const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        if (!summary.byMonth[monthKey]) {
+          summary.byMonth[monthKey] = 0;
+        }
+        summary.byMonth[monthKey] += 1;
+
+        if (!earliest || d < earliest) earliest = d;
+        if (!latest || d > latest) latest = d;
+      }
+    }
+  });
+
+  summary.firstArchivedAt = earliest ? earliest.toISOString() : null;
+  summary.lastArchivedAt = latest ? latest.toISOString() : null;
+
+  return summary;
+}
+
+async function rebuildAuditTrailFromAuditLog() {
+  try {
+    const content = await readFile(AUDIT_LOG_FILE, "utf8");
+    const auditLogs = JSON.parse(content);
+    if (!Array.isArray(auditLogs)) return [];
+
+    const eventTypeMap = {
+      create_rubbing: "rubbing_created",
+      register_damage: "damage_registered",
+      update_damage: "damage_updated",
+      approve_damage: "damage_approved",
+      reject_damage: "damage_rejected",
+      create_batch: "batch_created",
+      complete_batch: "batch_completed",
+      rollback_batch: "batch_rolled_back",
+      partial_rollback_batch: "batch_partially_rolled_back",
+      archive_images: "images_archived",
+      restore_backup: "backup_restored",
+      import_confirm: "data_imported"
+    };
+
+    return auditLogs.map((log) => ({
+      id: log.id || `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      eventType: eventTypeMap[log.actionType] || log.actionType || "unknown_event",
+      targetType: log.targetType || null,
+      targetId: log.targetId || null,
+      timestamp: log.timestamp || new Date().toISOString(),
+      actor: (log.newValues && log.newValues.reviewedBy) || (log.extra && log.extra.actor) || null,
+      oldValues: log.oldValues || null,
+      newValues: log.newValues || null,
+      reason: (log.newValues && log.newValues.rejectReason) || (log.extra && log.extra.reason) || null,
+      metadata: {
+        changeSummary: log.changeSummary || null,
+        success: log.success !== undefined ? log.success : true,
+        extra: log.extra || null
+      }
+    }));
+  } catch (e) {
+    console.warn(`[migrator] 从 audit-logs.json 重建 auditTrail 失败: ${e.message}`);
+    return [];
+  }
+}
+
+function buildDamageAuditTrailFromEntities(entities) {
+  const events = [];
+  const damages = entities.damages || [];
+  const now = new Date().toISOString();
+
+  damages.forEach((damage) => {
+    if (damage.reviewStatus === "approved" && damage.reviewedAt) {
+      events.push({
+        id: `evt_dmg_${damage.id}_approve`,
+        eventType: "damage_approved",
+        targetType: "damage",
+        targetId: damage.id,
+        timestamp: damage.reviewedAt,
+        actor: damage.reviewedBy || null,
+        oldValues: { reviewStatus: "review_pending" },
+        newValues: { reviewStatus: "approved", reviewedBy: damage.reviewedBy, reviewedAt: damage.reviewedAt },
+        reason: null,
+        metadata: { success: true, source: "v2_entity_migration" }
+      });
+    }
+    if (damage.reviewStatus === "rejected" && damage.reviewedAt) {
+      events.push({
+        id: `evt_dmg_${damage.id}_reject`,
+        eventType: "damage_rejected",
+        targetType: "damage",
+        targetId: damage.id,
+        timestamp: damage.reviewedAt,
+        actor: damage.reviewedBy || null,
+        oldValues: { reviewStatus: "review_pending" },
+        newValues: { reviewStatus: "rejected", reviewedBy: damage.reviewedBy, reviewedAt: damage.reviewedAt, rejectReason: damage.rejectReason },
+        reason: damage.rejectReason || null,
+        metadata: { success: true, source: "v2_entity_migration" }
+      });
+    }
+    if (damage.status === "repaired" && damage.repairedAt) {
+      events.push({
+        id: `evt_dmg_${damage.id}_repaired`,
+        eventType: "damage_status_changed",
+        targetType: "damage",
+        targetId: damage.id,
+        timestamp: damage.repairedAt,
+        actor: null,
+        oldValues: { status: "in_repair" },
+        newValues: { status: "repaired", repairedAt: damage.repairedAt, repairNote: damage.repairNote, afterPhotoUrl: damage.afterPhotoUrl },
+        reason: null,
+        metadata: { success: true, source: "v2_entity_migration" }
+      });
+    }
+  });
+
+  const batches = entities.batches || [];
+  batches.forEach((batch) => {
+    if (batch.status === "completed" && batch.completedAt) {
+      events.push({
+        id: `evt_batch_${batch.id}_complete`,
+        eventType: "batch_completed",
+        targetType: "batch",
+        targetId: batch.id,
+        timestamp: batch.completedAt,
+        actor: batch.responsible || null,
+        oldValues: { status: "open" },
+        newValues: { status: "completed", completedAt: batch.completedAt, note: batch.note },
+        reason: null,
+        metadata: { success: true, source: "v2_entity_migration", damageCount: batch.damageIds.length }
+      });
+    }
+    if (batch.status === "partially_rolled_back") {
+      events.push({
+        id: `evt_batch_${batch.id}_partial_rollback`,
+        eventType: "batch_partially_rolled_back",
+        targetType: "batch",
+        targetId: batch.id,
+        timestamp: batch.completedAt || now,
+        actor: batch.responsible || null,
+        oldValues: { status: "completed" },
+        newValues: { status: "partially_rolled_back", rolledBackDamageIds: batch.rolledBackDamageIds || [] },
+        reason: null,
+        metadata: { success: true, source: "v2_entity_migration", rolledBackCount: (batch.rolledBackDamageIds || []).length }
+      });
+    }
+  });
+
+  return events;
+}
+
+async function migrateV2ToV3(oldData, migrationMeta) {
+  const now = new Date().toISOString();
+  const newStructure = buildV3EmptyStructure();
+  newStructure.schemaVersion = 3;
+
+  const entities = oldData.entities || {
+    rubbings: oldData.rubbings || [],
+    damages: oldData.damages || [],
+    batches: oldData.batches || [],
+    repairImages: oldData.repairImages || [],
+    batchSnapshots: oldData.batchSnapshots || []
+  };
+
+  const oldMigrationHistory = oldData.meta && Array.isArray(oldData.meta.migrationHistory)
+    ? oldData.meta.migrationHistory
+    : [];
+
+  newStructure.meta = {
+    createdAt: oldData.meta?.createdAt || now,
+    lastModifiedAt: now,
+    migrationHistory: [
+      ...oldMigrationHistory,
+      {
+        fromVersion: migrationMeta.fromVersion,
+        toVersion: 3,
+        migratedAt: now,
+        backupFile: migrationMeta.backupFile || null,
+        note: migrationMeta.note || "v2→v3 升级：新增 auditTrail 历史事件、增强 imageArchive 统计"
+      }
+    ],
+    dataStatistics: {
+      rubbings: entities.rubbings.length,
+      damages: entities.damages.length,
+      batches: entities.batches.length,
+      repairImages: entities.repairImages.length,
+      batchSnapshots: entities.batchSnapshots.length,
+      auditTrailEvents: 0
+    }
+  };
+
+  newStructure.entities = entities;
+
+  newStructure.imageArchive.summary = rebuildImageArchiveStats(entities);
+
+  const entityEvents = buildDamageAuditTrailFromEntities(entities);
+  const auditLogEvents = await rebuildAuditTrailFromAuditLog();
+
+  const eventIdMap = new Map();
+  const allEvents = [...entityEvents, ...auditLogEvents];
+  const uniqueEvents = [];
+  allEvents.forEach((evt) => {
+    if (!eventIdMap.has(evt.id)) {
+      eventIdMap.set(evt.id, true);
+      uniqueEvents.push(evt);
+    }
+  });
+
+  uniqueEvents.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  newStructure.auditTrail = uniqueEvents;
+  newStructure.meta.dataStatistics.auditTrailEvents = uniqueEvents.length;
+
+  return newStructure;
+}
+
 async function migrateToLatest() {
   await ensureDirs();
 
@@ -378,11 +760,11 @@ async function migrateToLatest() {
   }
 
   if (!dbExists) {
-    const emptyV2 = buildV2EmptyStructure();
+    const emptyV3 = buildV3EmptyStructure();
     const now = new Date().toISOString();
-    emptyV2.meta.createdAt = now;
-    emptyV2.meta.lastModifiedAt = now;
-    await writeDbRaw(emptyV2);
+    emptyV3.meta.createdAt = now;
+    emptyV3.meta.lastModifiedAt = now;
+    await writeDbRaw(emptyV3);
     return {
       success: true,
       action: "initialized",
@@ -424,10 +806,10 @@ async function migrateToLatest() {
   }
 
   if (versionInfo.version === CURRENT_SCHEMA_VERSION) {
-    const validationErrors = validateV2Structure(currentData);
+    const validationErrors = validateV3Structure(currentData);
     if (validationErrors.length > 0) {
-      const error = new Error(`v2 结构校验失败: ${validationErrors.join("; ")}`);
-      error.code = "V2_STRUCTURE_CORRUPTED";
+      const error = new Error(`v3 结构校验失败: ${validationErrors.join("; ")}`);
+      error.code = "V3_STRUCTURE_CORRUPTED";
       error.validationErrors = validationErrors;
       throw error;
     }
@@ -476,8 +858,16 @@ async function migrateToLatest() {
       });
       migrationSteps.push("v1→v2");
     }
+    if (workingData.schemaVersion === 2) {
+      workingData = await migrateV2ToV3(workingData, {
+        fromVersion: versionInfo.version,
+        backupFile: backup.filename,
+        note: migrationSteps.length > 0 ? `经 ${migrationSteps.join(", ")} 升级` : "直接升级"
+      });
+      migrationSteps.push("v2→v3");
+    }
 
-    const validationErrors = validateV2Structure(workingData);
+    const validationErrors = validateV3Structure(workingData);
     if (validationErrors.length > 0) {
       throw new Error(`迁移后结构校验失败: ${validationErrors.join("; ")}`);
     }
@@ -492,7 +882,7 @@ async function migrateToLatest() {
       throw new Error(`写回后读取失败: ${verifyReadErr.message}`);
     }
 
-    const verifyErrors = validateV2Structure(verifyData);
+    const verifyErrors = validateV3Structure(verifyData);
     if (verifyErrors.length > 0) {
       throw new Error(`写回后结构校验失败: ${verifyErrors.join("; ")}`);
     }
@@ -573,7 +963,7 @@ async function checkMigrationStatus() {
     return result;
   }
   if (versionInfo.version === CURRENT_SCHEMA_VERSION) {
-    result.validationErrors = validateV2Structure(rawData);
+    result.validationErrors = validateV3Structure(rawData);
     result.structureValid = result.validationErrors.length === 0;
   }
   result.needsMigration = versionInfo.version < CURRENT_SCHEMA_VERSION;
@@ -581,8 +971,12 @@ async function checkMigrationStatus() {
     if (versionInfo.version === 0) {
       result.migrationPath.push("v0 (扁平) -> v1");
       result.migrationPath.push("v1 -> v2");
+      result.migrationPath.push("v2 -> v3");
     } else if (versionInfo.version === 1) {
       result.migrationPath.push("v1 -> v2");
+      result.migrationPath.push("v2 -> v3");
+    } else if (versionInfo.version === 2) {
+      result.migrationPath.push("v2 -> v3");
     }
     result.potentialConflicts = detectPotentialConflicts(rawData, CURRENT_SCHEMA_VERSION);
   }
@@ -718,7 +1112,10 @@ module.exports = {
   MIN_SUPPORTED_VERSION,
   detectSchemaVersion,
   validateV2Structure,
+  validateV3Structure,
   buildV2EmptyStructure,
+  buildV3EmptyStructure,
+  rebuildImageArchiveStats,
   migrateToLatest,
   checkMigrationStatus,
   createMigrationBackup,
