@@ -764,7 +764,7 @@ async function migrateV2ToV3(oldData, migrationMeta) {
   return newStructure;
 }
 
-async function migrateToLatest() {
+async function migrateToLatest(expectedVersion = undefined) {
   await ensureDirs();
 
   let dbExists = true;
@@ -887,9 +887,53 @@ async function migrateToLatest() {
       throw new Error(`迁移后结构校验失败: ${validationErrors.join("; ")}`);
     }
 
+    let verifyCurrentRaw;
+    try {
+      verifyCurrentRaw = JSON.parse(await readFile(DB_FILE, "utf8"));
+    } catch (verifyReadErr) {
+      const error = new Error(`迁移前重新读取数据库失败: ${verifyReadErr.message}`);
+      error.code = "READ_FAILED";
+      error.cause = verifyReadErr;
+      throw error;
+    }
+
+    const currentWriteVersion = verifyCurrentRaw?.meta?.writeVersion ?? 0;
     const originalWriteVersion = currentData?.meta?.writeVersion ?? 0;
+
+    if (expectedVersion !== undefined && currentWriteVersion !== expectedVersion) {
+      const error = new Error(
+        `迁移被阻断：您所基于的数据版本（v${expectedVersion}）已被其他请求修改（当前版本 v${currentWriteVersion}）。请刷新后重试。`
+      );
+      error.code = "VERSION_CONFLICT";
+      error.status = 409;
+      error.expectedVersion = expectedVersion;
+      error.currentVersion = currentWriteVersion;
+      try {
+        await restoreFromBackupFile(backup.path);
+        error.backupFile = backup.filename;
+      } catch (_) {
+      }
+      throw error;
+    }
+
+    if (originalWriteVersion !== currentWriteVersion) {
+      const error = new Error(
+        `迁移被阻断：迁移过程中数据库版本已从 v${originalWriteVersion} 变更为 v${currentWriteVersion}`
+      );
+      error.code = "VERSION_CONFLICT";
+      error.status = 409;
+      error.expectedVersion = originalWriteVersion;
+      error.currentVersion = currentWriteVersion;
+      try {
+        await restoreFromBackupFile(backup.path);
+        error.backupFile = backup.filename;
+      } catch (_) {
+      }
+      throw error;
+    }
+
     if (workingData.meta) {
-      workingData.meta.writeVersion = originalWriteVersion + 1;
+      workingData.meta.writeVersion = currentWriteVersion + 1;
     }
 
     await writeDbRaw(workingData);

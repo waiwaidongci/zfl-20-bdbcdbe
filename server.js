@@ -966,7 +966,7 @@ async function computeBackupDiff(filename) {
   return result;
 }
 
-async function restoreFromBackup(filename, precomputedDiff = null) {
+async function restoreFromBackup(filename, precomputedDiff = null, expectedVersion = undefined) {
   const validation = await validateBackup(filename);
   const backup = await readBackupFile(filename);
   const tempFile = path.join(BACKUP_DIR, `temp_restore_${Date.now()}.json`);
@@ -1005,6 +1005,10 @@ async function restoreFromBackup(filename, precomputedDiff = null) {
       }
       const currentVersion = getWriteVersion(currentRaw);
 
+      if (expectedVersion !== undefined && currentVersion !== expectedVersion) {
+        throw createVersionConflictError(expectedVersion, currentVersion);
+      }
+
       let dataToWrite = JSON.parse(JSON.stringify(backup.data));
 
       if (dataToWrite && typeof dataToWrite === "object" && dataToWrite.meta) {
@@ -1038,7 +1042,7 @@ async function restoreFromBackup(filename, precomputedDiff = null) {
 
       const backupVersion = backup.data.schemaVersion ?? 0;
       if (backupVersion < migrator.CURRENT_SCHEMA_VERSION) {
-        return migrator.migrateToLatest();
+        return migrator.migrateToLatest(currentVersion + 1);
       }
       return null;
     });
@@ -2964,6 +2968,12 @@ async function handle(req, res) {
   if (backupRestoreMatch && req.method === "POST") {
     const filename = sanitizeBackupFilename(decodeURIComponent(backupRestoreMatch[1]));
     try {
+      const body = await parseBody(req);
+      let expectedVersion = undefined;
+      if (body && typeof body.expectedVersion === "number") {
+        expectedVersion = body.expectedVersion;
+      }
+
       let backupInfo;
       try {
         const backupValidation = await validateBackup(filename);
@@ -2984,7 +2994,7 @@ async function handle(req, res) {
         precomputedDiff = null;
       }
 
-      const result = await restoreFromBackup(filename, precomputedDiff);
+      const result = await restoreFromBackup(filename, precomputedDiff, expectedVersion);
       const businessResult = { data: result };
 
       const auditExtra = {
@@ -3079,7 +3089,7 @@ const server = http.createServer((req, res) => {
   let startupWarning = null;
 
   try {
-    const migrationResult = await migrator.migrateToLatest();
+    const migrationResult = await enqueueWrite(() => migrator.migrateToLatest());
     if (migrationResult.action === "migrated") {
       console.log(`[数据迁移] 成功: ${migrationResult.message}`);
       console.log(`[数据迁移] 从版本 v${migrationResult.fromVersion} 升级到 v${migrationResult.toVersion}`);

@@ -297,9 +297,15 @@ async function createBackup() {
   return res;
 }
 
-async function restoreBackup(filename) {
-  const res = await request("POST", `/backups/${encodeURIComponent(filename)}/restore`);
+async function restoreBackup(filename, expectedVersion = undefined) {
+  const body = expectedVersion !== undefined ? { expectedVersion } : null;
+  const res = await request("POST", `/backups/${encodeURIComponent(filename)}/restore`, body);
   return res;
+}
+
+async function getCurrentWriteVersion() {
+  const res = await request("GET", "/schema-version");
+  return res.body.meta?.writeVersion ?? 0;
 }
 
 async function runBackupRestoreConflictTest() {
@@ -310,9 +316,16 @@ async function runBackupRestoreConflictTest() {
   const backupFilename = backupRes.body.data.filename;
   console.log(`  创建备份: ${backupFilename}`);
 
+  const versionBefore = await getCurrentWriteVersion();
+  console.log(`  初始版本号: v${versionBefore}`);
+
   const rubbing = await createTestRubbing();
   const rubbingId = rubbing.id;
   console.log(`  创建拓片: ${rubbingId}`);
+
+  const versionAfterRubbing = await getCurrentWriteVersion();
+  console.log(`  创建拓片后版本号: v${versionAfterRubbing}`);
+  assert(versionAfterRubbing > versionBefore, "创建拓片后版本号应递增");
 
   const damagePromises = [];
   for (let i = 0; i < 5; i++) {
@@ -333,17 +346,66 @@ async function runBackupRestoreConflictTest() {
   console.log(`  缺损创建成功: ${damageSuccess}`);
   console.log(`  缺损创建冲突 (409): ${damageConflict}`);
   console.log(`  备份恢复状态: ${restoreResult.status}`);
+  assert(
+    restoreResult.status === 200 || restoreResult.status === 409,
+    `备份恢复应返回 200 或 409，实际返回: ${restoreResult.status}`
+  );
 
   if (restoreResult.status === 200) {
     console.log("  ✓ 备份恢复成功");
   } else if (restoreResult.status === 409) {
     console.log("  ✓ 备份恢复检测到冲突（409）");
+    assert(
+      restoreResult.body.code === "VERSION_CONFLICT",
+      `冲突时错误码应为 VERSION_CONFLICT，实际: ${restoreResult.body.code}`
+    );
   }
 
   if (damageConflict > 0 || restoreResult.status === 409) {
     console.log("  ✓ 检测到版本冲突，乐观锁在备份恢复场景生效");
   } else {
-    console.log("  ⚠ 未检测到明显冲突");
+    console.log("  ⚠ 未检测到明显冲突，写入队列可能有序地完成了所有操作");
+  }
+
+  console.log("\n  --- 子测试：显式 expectedVersion 冲突检测 ---");
+  const explicitVersion = versionBefore;
+  console.log(`  使用过期版本号 v${explicitVersion} 发起恢复...`);
+  const conflictRestoreRes = await restoreBackup(backupFilename, explicitVersion);
+  console.log(`  恢复结果: ${conflictRestoreRes.status}`);
+
+  if (explicitVersion !== versionAfterRubbing) {
+    assert(
+      conflictRestoreRes.status === 409,
+      `使用过期版本号 v${explicitVersion} 恢复应返回 409，实际: ${conflictRestoreRes.status} - ${JSON.stringify(conflictRestoreRes.body)}`
+    );
+    assert(
+      conflictRestoreRes.body.code === "VERSION_CONFLICT",
+      `显式冲突时错误码应为 VERSION_CONFLICT，实际: ${conflictRestoreRes.body.code}`
+    );
+    assert(
+      conflictRestoreRes.body.error && conflictRestoreRes.body.error.includes("版本冲突"),
+      "错误信息应包含版本冲突描述"
+    );
+    console.log("  ✓ 显式 expectedVersion 冲突检测通过（409 + VERSION_CONFLICT）");
+  } else {
+    console.log("  ⚠ 版本号一致，无法触发显式冲突测试（跳过）");
+  }
+
+  console.log("\n  --- 子测试：正确 expectedVersion 恢复成功 ---");
+  const currentVersion = await getCurrentWriteVersion();
+  console.log(`  使用当前版本号 v${currentVersion} 发起恢复...`);
+  const correctRestoreRes = await restoreBackup(backupFilename, currentVersion);
+  console.log(`  恢复结果: ${correctRestoreRes.status}`);
+
+  if (correctRestoreRes.status === 200) {
+    const finalVersion = await getCurrentWriteVersion();
+    console.log(`  恢复后版本号: v${finalVersion}`);
+    assert(finalVersion > currentVersion, "恢复成功后版本号应递增");
+    console.log("  ✓ 使用正确版本号恢复成功，版本号正确递增");
+  } else if (correctRestoreRes.status === 409) {
+    console.log("  ⚠ 版本号在检查和恢复之间被其他操作修改（并发条件下可接受）");
+  } else {
+    assert(false, `使用正确版本号恢复应返回 200，实际: ${correctRestoreRes.status} - ${JSON.stringify(correctRestoreRes.body)}`);
   }
 
   console.log("  ✓ 备份恢复冲突测试通过");
