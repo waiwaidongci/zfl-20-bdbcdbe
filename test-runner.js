@@ -5,9 +5,14 @@ const testHelper = require("./test-helper");
 
 const DB_FILE = testHelper.DB_FILE;
 const AUDIT_LOG_FILE = testHelper.AUDIT_LOG_FILE;
+const BACKUP_DIR = path.join(__dirname, "data", "backups");
 
 const RUNNER_BACKUP_DB = path.join(__dirname, "data", "db.json.runner_backup");
 const RUNNER_BACKUP_AUDIT = path.join(__dirname, "data", "audit-logs.json.runner_backup");
+const RUNNER_BACKUP_DIR = path.join(__dirname, "data", ".runner_backups_snapshot");
+const RUNNER_TEMP_FILES = [
+  path.join(__dirname, "data", "db.json.concurrent_test_backup")
+];
 
 const TEST_FILES = [
   { file: "test-review.js", name: "缺损审核模块", description: "审核通过/驳回、旧数据兼容、CSV导出审核字段" },
@@ -129,6 +134,12 @@ function runnerBackup() {
     if (fs.existsSync(AUDIT_LOG_FILE)) {
       fs.copyFileSync(AUDIT_LOG_FILE, RUNNER_BACKUP_AUDIT);
     }
+    if (fs.existsSync(RUNNER_BACKUP_DIR)) {
+      fs.rmSync(RUNNER_BACKUP_DIR, { recursive: true, force: true });
+    }
+    if (fs.existsSync(BACKUP_DIR)) {
+      fs.cpSync(BACKUP_DIR, RUNNER_BACKUP_DIR, { recursive: true });
+    }
     return true;
   } catch (e) {
     console.error(`[runner] 备份失败: ${e.message}`);
@@ -148,6 +159,16 @@ function runnerRestore() {
       fs.copyFileSync(RUNNER_BACKUP_AUDIT, AUDIT_LOG_FILE);
       try { fs.unlinkSync(RUNNER_BACKUP_AUDIT); } catch (_) {}
     }
+    if (fs.existsSync(RUNNER_BACKUP_DIR)) {
+      fs.rmSync(BACKUP_DIR, { recursive: true, force: true });
+      fs.cpSync(RUNNER_BACKUP_DIR, BACKUP_DIR, { recursive: true });
+      fs.rmSync(RUNNER_BACKUP_DIR, { recursive: true, force: true });
+    }
+    for (const file of RUNNER_TEMP_FILES) {
+      if (fs.existsSync(file)) {
+        fs.unlinkSync(file);
+      }
+    }
     return true;
   } catch (e) {
     console.error(`[runner] 恢复失败: ${e.message}`);
@@ -159,6 +180,10 @@ function runnerCleanupBackup() {
   try {
     if (fs.existsSync(RUNNER_BACKUP_DB)) fs.unlinkSync(RUNNER_BACKUP_DB);
     if (fs.existsSync(RUNNER_BACKUP_AUDIT)) fs.unlinkSync(RUNNER_BACKUP_AUDIT);
+    if (fs.existsSync(RUNNER_BACKUP_DIR)) fs.rmSync(RUNNER_BACKUP_DIR, { recursive: true, force: true });
+    for (const file of RUNNER_TEMP_FILES) {
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+    }
   } catch (_) {}
 }
 
@@ -250,6 +275,7 @@ async function main() {
     console.log(`⚠️   失败保留模式: 测试失败时不会自动恢复数据，便于排查问题`);
   }
   console.log(`备份文件: ${path.relative(__dirname, RUNNER_BACKUP_DB)}`);
+  console.log(`备份目录快照: ${path.relative(__dirname, RUNNER_BACKUP_DIR)}`);
 
   const results = [];
   let hasFailure = false;
@@ -279,6 +305,7 @@ async function main() {
         console.log("\n⚠️   失败保留模式已启用：现场数据未恢复。");
         console.log(`    db.json 备份在: ${path.relative(__dirname, RUNNER_BACKUP_DB)}`);
         console.log(`    audit-logs.json 备份在: ${path.relative(__dirname, RUNNER_BACKUP_AUDIT)}`);
+        console.log(`    backups 目录快照在: ${path.relative(__dirname, RUNNER_BACKUP_DIR)}`);
         console.log(`    手动恢复请执行: node test-runner.js --restore`);
       } else {
         console.log("\n[runner] 检测到失败，正在恢复原始数据 ...");
@@ -310,7 +337,7 @@ async function main() {
 
 if (process.argv.includes("--restore")) {
   console.log("[runner] 手动恢复模式 ...");
-  if (fs.existsSync(RUNNER_BACKUP_DB) || fs.existsSync(RUNNER_BACKUP_AUDIT)) {
+  if (fs.existsSync(RUNNER_BACKUP_DB) || fs.existsSync(RUNNER_BACKUP_AUDIT) || fs.existsSync(RUNNER_BACKUP_DIR)) {
     runnerRestore();
     console.log("[runner] 数据已恢复 ✓");
   } else {

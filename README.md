@@ -536,6 +536,7 @@ KEEP_FAILURE=1 node test-runner.js test-audit-logs.js
 保留模式下，测试失败后不会自动恢复 `data/db.json` 和 `data/audit-logs.json`，原始数据备份在：
 - `data/db.json.runner_backup`
 - `data/audit-logs.json.runner_backup`
+- `data/.runner_backups_snapshot`
 
 排查完毕后手动恢复：
 
@@ -562,7 +563,7 @@ node test-runner.js --clean-backup
 - **零依赖**：不引入任何测试框架，纯 Node.js 内置模块实现
 - **数据隔离**：每个测试脚本独立子进程运行，互不干扰
 - **自动备份**：runner 启动前自动备份 `db.json` 和 `audit-logs.json`
-- **成功恢复**：测试通过后自动恢复到测试前的状态
+- **成功恢复**：测试通过后自动恢复到测试前的状态，并恢复 `data/backups` 目录快照
 - **失败保留**：`--keep-failure` 模式下失败时保留现场，便于调试
 - **顺序执行**：全量测试按功能依赖顺序依次执行
 - **复用现有逻辑**：完全复用各脚本中已有的启动 server、端口探测、备份恢复实现
