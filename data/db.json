@@ -1,78 +1,44 @@
 {
   "schemaVersion": 3,
   "meta": {
-    "createdAt": "2026-06-18T06:32:44.513Z",
-    "lastModifiedAt": "2026-06-18T06:32:44.513Z",
+    "createdAt": "2026-06-18T07:54:41.337Z",
+    "lastModifiedAt": "2026-06-18T07:54:41.419Z",
     "migrationHistory": [],
     "dataStatistics": {
       "rubbings": 1,
-      "damages": 2,
-      "batches": 1,
+      "damages": 1,
+      "batches": 0,
       "repairImages": 0,
       "batchSnapshots": 0,
-      "auditTrailEvents": 0
+      "auditTrailEvents": 1
     }
   },
   "entities": {
     "rubbings": [
       {
         "id": "r1",
-        "code": "TP-清-014",
-        "source": "地方碑刻残页",
-        "paperSize": "42x68cm",
-        "note": "",
-        "createdAt": "2026-01-01T00:00:00.000Z"
+        "code": "TP-测试-001",
+        "source": "测试来源",
+        "paperSize": "30x40cm",
+        "createdAt": "2026-06-01T00:00:00.000Z"
       }
     ],
     "damages": [
       {
         "id": "d1",
         "rubbingId": "r1",
-        "position": "左上角",
-        "type": "虫蛀孔",
-        "beforePhotoUrl": "x.jpg",
-        "afterPhotoUrl": "",
-        "status": "in_repair",
-        "repairNote": "",
-        "batchId": "b1",
-        "createdAt": "2026-01-01T00:00:00.000Z",
-        "repairedAt": null,
+        "position": "测试位置",
+        "type": "测试类型",
+        "beforePhotoUrl": "test.jpg",
+        "status": "pending",
         "reviewStatus": "approved",
-        "rejectReason": ""
-      },
-      {
-        "id": "d2",
-        "rubbingId": "r1",
-        "position": "下边缘",
-        "type": "撕裂",
-        "beforePhotoUrl": "x.jpg",
-        "afterPhotoUrl": "",
-        "status": "in_repair",
-        "repairNote": "",
-        "batchId": "b1",
-        "createdAt": "2026-01-01T00:00:00.000Z",
-        "repairedAt": null,
-        "reviewStatus": "approved",
-        "rejectReason": ""
-      }
-    ],
-    "batches": [
-      {
-        "id": "b1",
-        "name": "六月修补批次",
-        "status": "open",
-        "damageIds": [
-          "d1",
-          "d2"
-        ],
-        "note": "",
         "createdAt": "2026-06-01T00:00:00.000Z",
-        "completedAt": null,
-        "plannedStartAt": "2026-06-10T00:00:00.000Z",
-        "plannedEndAt": "2026-06-15T00:00:00.000Z",
-        "responsible": "张师傅"
+        "rejectReason": "",
+        "reviewedBy": "审核员1",
+        "reviewedAt": "2026-06-18T07:54:41.419Z"
       }
     ],
+    "batches": [],
     "repairImages": [],
     "batchSnapshots": []
   },
@@ -92,5 +58,43 @@
       "storagePath": "./data/image-archive"
     }
   },
-  "auditTrail": []
+  "auditTrail": [
+    {
+      "id": "evt_mqj7fcel_pmuabt",
+      "eventType": "damage_approved",
+      "targetType": "damage",
+      "targetId": "d1",
+      "timestamp": "2026-06-18T07:54:41.421Z",
+      "actor": "审核员1",
+      "oldValues": {
+        "id": "d1",
+        "rubbingId": "r1",
+        "position": "测试位置",
+        "type": "测试类型",
+        "beforePhotoUrl": "test.jpg",
+        "status": "pending",
+        "reviewStatus": "review_pending",
+        "createdAt": "2026-06-01T00:00:00.000Z"
+      },
+      "newValues": {
+        "id": "d1",
+        "rubbingId": "r1",
+        "position": "测试位置",
+        "type": "测试类型",
+        "beforePhotoUrl": "test.jpg",
+        "status": "pending",
+        "reviewStatus": "approved",
+        "createdAt": "2026-06-01T00:00:00.000Z",
+        "rejectReason": "",
+        "reviewedBy": "审核员1",
+        "reviewedAt": "2026-06-18T07:54:41.419Z"
+      },
+      "reason": null,
+      "metadata": {
+        "changeSummary": "审核通过：缺损 d1，审核人 审核员1，状态 review_pending → approved",
+        "success": true,
+        "extra": null
+      }
+    }
+  ]
 }

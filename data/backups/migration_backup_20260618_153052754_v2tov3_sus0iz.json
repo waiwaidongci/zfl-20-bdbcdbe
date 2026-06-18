@@ -1,0 +1,91 @@
+{
+  "meta": {
+    "type": "migration_backup",
+    "createdAt": "2026-06-18T07:30:52.755Z",
+    "fromVersion": 2,
+    "toVersion": 3,
+    "originalVersion": 2,
+    "originalValid": true,
+    "dataCounts": {
+      "rubbings": 1,
+      "damages": 2,
+      "batches": 0,
+      "repairImages": 0,
+      "batchSnapshots": 0
+    }
+  },
+  "data": {
+    "schemaVersion": 2,
+    "meta": {
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "lastModifiedAt": "2026-06-01T00:00:00.000Z",
+      "migrationHistory": [],
+      "dataStatistics": {
+        "rubbings": 1,
+        "damages": 2,
+        "batches": 0,
+        "repairImages": 0,
+        "batchSnapshots": 0
+      }
+    },
+    "entities": {
+      "rubbings": [
+        {
+          "id": "rubbing_demo",
+          "code": "TP-清-014",
+          "source": "地方碑刻残页",
+          "paperSize": "42x68cm",
+          "note": "边缘有旧折痕",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "damages": [
+        {
+          "id": "damage_demo_1",
+          "rubbingId": "rubbing_demo",
+          "position": "左上角第3列题字旁",
+          "type": "虫蛀孔",
+          "beforePhotoUrl": "https://example.local/before-014-1.jpg",
+          "afterPhotoUrl": "",
+          "status": "pending",
+          "repairNote": "",
+          "batchId": null,
+          "reviewStatus": "approved",
+          "rejectReason": "",
+          "reviewedBy": "系统初始化",
+          "reviewedAt": "2026-01-01T00:00:00.000Z",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "repairedAt": null
+        },
+        {
+          "id": "damage_demo_2",
+          "rubbingId": "rubbing_demo",
+          "position": "下边缘中央",
+          "type": "撕裂",
+          "beforePhotoUrl": "https://example.local/before-014-2.jpg",
+          "afterPhotoUrl": "",
+          "status": "pending",
+          "repairNote": "",
+          "batchId": null,
+          "reviewStatus": "review_pending",
+          "rejectReason": "",
+          "reviewedBy": null,
+          "reviewedAt": null,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "repairedAt": null
+        }
+      ],
+      "batches": [],
+      "repairImages": [],
+      "batchSnapshots": []
+    },
+    "imageArchive": {
+      "archivedImages": [],
+      "archiveStats": {
+        "totalArchived": 0,
+        "lastArchivedAt": null,
+        "storagePath": "./data/image-archive"
+      }
+    }
+  }
+}

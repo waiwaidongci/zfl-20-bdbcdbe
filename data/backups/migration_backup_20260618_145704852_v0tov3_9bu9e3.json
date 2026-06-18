@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "type": "migration_backup",
+    "createdAt": "2026-06-18T06:57:04.852Z",
+    "fromVersion": 0,
+    "toVersion": 3,
+    "originalVersion": 0,
+    "originalValid": true,
+    "dataCounts": {
+      "rubbings": 1,
+      "damages": 1,
+      "batches": 0,
+      "repairImages": 0,
+      "batchSnapshots": 0
+    }
+  },
+  "data": {
+    "rubbings": [
+      {
+        "id": "r1",
+        "code": "TP-测试-002",
+        "source": "测试v0",
+        "paperSize": "30x40cm",
+        "createdAt": "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    "damages": [
+      {
+        "id": "d1",
+        "rubbingId": "r1",
+        "position": "v0测试",
+        "type": "虫蛀",
+        "beforePhotoUrl": "test.jpg",
+        "status": "pending",
+        "createdAt": "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    "batches": []
+  }
+}

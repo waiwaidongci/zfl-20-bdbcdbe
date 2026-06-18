@@ -385,14 +385,11 @@ node data-migrator.js status
 # 执行迁移（自动备份）
 node data-migrator.js migrate
 
-# 强制重新迁移
-node data-migrator.js migrate --force
+# 详细检查数据结构和潜在冲突
+node data-migrator.js check
 
-# 仅验证结构
-node data-migrator.js validate
-
-# 列出备份
-node data-migrator.js backups
+# 查看帮助
+node data-migrator.js --help
 ```
 
 #### 迁移安全保障

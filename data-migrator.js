@@ -58,9 +58,15 @@ function validateVersionedStructure(data, version) {
     return errors;
   }
   if (version === 1) {
-    const required = ["rubbings", "damages", "batches", "repairImages", "batchSnapshots"];
+    const required = ["rubbings", "damages", "batches"];
+    const optional = ["repairImages", "batchSnapshots"];
     for (const k of required) {
       if (!Array.isArray(data[k])) {
+        errors.push(`${k} 不是数组`);
+      }
+    }
+    for (const k of optional) {
+      if (data[k] !== undefined && !Array.isArray(data[k])) {
         errors.push(`${k} 不是数组`);
       }
     }
@@ -133,9 +139,15 @@ function validateV2Structure(data) {
   if (!data.entities || typeof data.entities !== "object") {
     errors.push("缺少 entities 字段");
   } else {
-    const entityKeys = ["rubbings", "damages", "batches", "repairImages", "batchSnapshots"];
-    for (const k of entityKeys) {
+    const requiredEntityKeys = ["rubbings", "damages", "batches"];
+    const optionalEntityKeys = ["repairImages", "batchSnapshots"];
+    for (const k of requiredEntityKeys) {
       if (!Array.isArray(data.entities[k])) {
+        errors.push(`entities.${k} 不是数组`);
+      }
+    }
+    for (const k of optionalEntityKeys) {
+      if (data.entities[k] !== undefined && !Array.isArray(data.entities[k])) {
         errors.push(`entities.${k} 不是数组`);
       }
     }

@@ -38,7 +38,8 @@ const ENTITY_KEY_FIELDS = {
   damages: ["id", "position", "type", "status", "reviewStatus"],
   batches: ["id", "name", "status"],
   repairImages: ["id", "damageId", "stage", "url"],
-  batchSnapshots: ["id", "batchId", "createdAt"]
+  batchSnapshots: ["id", "batchId", "createdAt"],
+  auditTrail: ["id", "eventType", "targetType", "targetId", "timestamp"]
 };
 
 const VALID_REPAIR_STATUSES = ["pending", "in_repair", "repaired"];
@@ -501,16 +502,24 @@ function getBackupFilename(timestamp) {
 function validateDataStructure(data) {
   if (!data || typeof data !== "object") return false;
   if (typeof data.schemaVersion === "number" && data.entities) {
-    const requiredKeys = ["rubbings", "damages", "batches", "repairImages", "batchSnapshots"];
-    for (const key of requiredKeys) {
+    const v2RequiredKeys = ["rubbings", "damages", "batches"];
+    const v2OptionalKeys = ["repairImages", "batchSnapshots"];
+    for (const key of v2RequiredKeys) {
       if (!Array.isArray(data.entities[key])) return false;
+    }
+    for (const key of v2OptionalKeys) {
+      if (data.entities[key] !== undefined && !Array.isArray(data.entities[key])) return false;
     }
     if (data.schemaVersion >= 3 && !Array.isArray(data.auditTrail)) return false;
     return true;
   }
-  const requiredKeys = ["rubbings", "damages", "batches", "repairImages", "batchSnapshots"];
-  for (const key of requiredKeys) {
+  const v0RequiredKeys = ["rubbings", "damages", "batches"];
+  const v0OptionalKeys = ["repairImages", "batchSnapshots", "auditTrail"];
+  for (const key of v0RequiredKeys) {
     if (!Array.isArray(data[key])) return false;
+  }
+  for (const key of v0OptionalKeys) {
+    if (data[key] !== undefined && !Array.isArray(data[key])) return false;
   }
   return true;
 }
@@ -862,9 +871,16 @@ async function computeBackupDiff(filename) {
     result.diff[type] = computeEntityDiff(currentDb[type], backupEntities[type], type);
   });
 
-  const totalAdded = entityTypes.reduce((sum, t) => sum + result.diff[t].counts.added, 0);
-  const totalRemoved = entityTypes.reduce((sum, t) => sum + result.diff[t].counts.removed, 0);
-  const totalChanged = entityTypes.reduce((sum, t) => sum + result.diff[t].counts.changed, 0);
+  if (structureInfo.version >= 3 && currentDb.auditTrail) {
+    result.diff.auditTrail = computeEntityDiff(currentDb.auditTrail, backupEntities.auditTrail || [], "auditTrail");
+  }
+
+  const totalAdded = entityTypes.reduce((sum, t) => sum + result.diff[t].counts.added, 0) 
+    + (result.diff.auditTrail ? result.diff.auditTrail.counts.added : 0);
+  const totalRemoved = entityTypes.reduce((sum, t) => sum + result.diff[t].counts.removed, 0)
+    + (result.diff.auditTrail ? result.diff.auditTrail.counts.removed : 0);
+  const totalChanged = entityTypes.reduce((sum, t) => sum + result.diff[t].counts.changed, 0)
+    + (result.diff.auditTrail ? result.diff.auditTrail.counts.changed : 0);
 
   result.summary = {
     totalAdded,
@@ -897,6 +913,9 @@ async function restoreFromBackup(filename, precomputedDiff = null) {
     }
   }
 
+  const warnings = [...(diff.warnings || [])];
+  let migrationResult = null;
+
   try {
     await writeFile(tempFile, JSON.stringify(backup.data, null, 2));
     const verifyData = JSON.parse(await readFile(tempFile, "utf8"));
@@ -904,6 +923,28 @@ async function restoreFromBackup(filename, precomputedDiff = null) {
       throw new Error("恢复前校验失败：数据结构无效");
     }
     await writeFile(DB_FILE, JSON.stringify(backup.data, null, 2));
+
+    const backupVersion = backup.data.schemaVersion ?? 0;
+    if (backupVersion < migrator.CURRENT_SCHEMA_VERSION) {
+      warnings.push(`备份数据为 v${backupVersion} 版本，正在自动升级到 v${migrator.CURRENT_SCHEMA_VERSION}`);
+      try {
+        migrationResult = await migrator.migrateToLatest();
+        if (migrationResult.action === "migrated") {
+          warnings.push(`自动升级成功: v${migrationResult.fromVersion} → v${migrationResult.toVersion}`);
+          if (migrationResult.backup) {
+            warnings.push(`升级前备份: ${migrationResult.backup.filename}`);
+          }
+        } else if (migrationResult.action === "none_needed") {
+          warnings.push(`数据已是最新版本 v${migrationResult.toVersion}`);
+        }
+      } catch (migrationError) {
+        warnings.push(`自动升级失败: ${migrationError.message}，数据停留在 v${backupVersion}`);
+        if (migrationError.backupFile) {
+          warnings.push(`升级前备份文件: ${migrationError.backupFile}`);
+        }
+      }
+    }
+
     return {
       success: true,
       restoredFrom: filename,
@@ -911,7 +952,9 @@ async function restoreFromBackup(filename, precomputedDiff = null) {
       dataCounts: validation.dataCounts,
       restoreImpact: diff.summary || null,
       diff: diff.diff || null,
-      warnings: diff.warnings || []
+      warnings,
+      migrationResult,
+      finalVersion: migrationResult?.toVersion ?? backupVersion
     };
   } finally {
     try {
