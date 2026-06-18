@@ -1,1 +1,43 @@
-[]
+[
+  {
+    "id": "audit_mqj2l8oi_zzpusz",
+    "timestamp": "2026-06-18T05:39:18.450Z",
+    "actionType": "restore_backup",
+    "targetType": "backup",
+    "targetId": "backup_20260618_133917991_restoretest.json",
+    "success": true,
+    "changeSummary": "备份恢复：从 backup_20260618_133917991_restoretest.json 恢复，拓片 1 张，缺损 2 项；恢复将新增 0 条、删除 0 条、变更 3 条记录（共 3 条受影响）",
+    "oldValues": {
+      "filename": "backup_20260618_133917991_restoretest.json",
+      "dataCounts": {
+        "rubbings": 1,
+        "damages": 2,
+        "batches": 0,
+        "repairImages": 0,
+        "batchSnapshots": 0
+      },
+      "createdAt": "2026-06-18T05:39:17.995Z",
+      "size": 1695
+    },
+    "newValues": {
+      "restoredAt": "2026-06-18T05:39:18.379Z",
+      "dataCounts": {
+        "rubbings": 1,
+        "damages": 2,
+        "batches": 0,
+        "repairImages": 0,
+        "batchSnapshots": 0
+      }
+    },
+    "extra": {
+      "restoreImpact": {
+        "totalAdded": 0,
+        "totalRemoved": 0,
+        "totalChanged": 3,
+        "totalImpacted": 3,
+        "restoreImpact": "恢复将新增 0 条、删除 0 条、变更 3 条记录（共 3 条受影响）"
+      },
+      "warnings": []
+    }
+  }
+]

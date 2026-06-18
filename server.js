@@ -26,7 +26,18 @@ const AUDIT_ACTION_TYPES = {
 const BACKUP_ERRORS = {
   BACKUP_NOT_FOUND: "BACKUP_NOT_FOUND",
   JSON_CORRUPTED: "JSON_CORRUPTED",
-  INVALID_STRUCTURE: "INVALID_STRUCTURE"
+  INVALID_STRUCTURE: "INVALID_STRUCTURE",
+  UNSUPPORTED_VERSION: "UNSUPPORTED_VERSION",
+  EMPTY_BACKUP: "EMPTY_BACKUP"
+};
+
+const DIFF_SAMPLE_LIMIT = 5;
+const ENTITY_KEY_FIELDS = {
+  rubbings: ["id", "code", "source", "paperSize"],
+  damages: ["id", "position", "type", "status", "reviewStatus"],
+  batches: ["id", "name", "status"],
+  repairImages: ["id", "damageId", "stage", "url"],
+  batchSnapshots: ["id", "batchId", "createdAt"]
 };
 
 const VALID_REPAIR_STATUSES = ["pending", "in_repair", "repaired"];
@@ -118,6 +129,7 @@ const routes = [
   "GET /backups",
   "POST /backups",
   "GET /backups/:filename/validate",
+  "GET /backups/:filename/diff",
   "POST /backups/:filename/restore",
   "GET /audit-logs?actionType=&targetId=&targetType=&startDate=&endDate=&success="
 ];
@@ -306,8 +318,13 @@ function buildChangeSummary(actionType, oldValues, newValues, extra) {
       const damageId = extra?.damageId || (newValues && newValues[0]?.damageId) || "unknown";
       return `影像归档：缺损 ${damageId}，新增 ${count} 张影像`;
     }
-    case AUDIT_ACTION_TYPES.RESTORE_BACKUP:
-      return `备份恢复：从 ${oldValues.filename} 恢复，拓片 ${oldValues.dataCounts?.rubbings || "?"} 张，缺损 ${oldValues.dataCounts?.damages || "?"} 项`;
+    case AUDIT_ACTION_TYPES.RESTORE_BACKUP: {
+      const base = `备份恢复：从 ${oldValues.filename} 恢复，拓片 ${oldValues.dataCounts?.rubbings || "?"} 张，缺损 ${oldValues.dataCounts?.damages || "?"} 项`;
+      if (extra?.restoreImpact) {
+        return `${base}；${extra.restoreImpact.restoreImpact || ""}`;
+      }
+      return base;
+    }
     case AUDIT_ACTION_TYPES.IMPORT_CONFIRM: {
       const imported = extra?.imported || { rubbings: 0, damages: 0 };
       const skipped = extra?.skipped || { rubbings: 0, damages: 0 };
@@ -417,7 +434,7 @@ function sanitizeBackupFilename(filename) {
     error.status = 400;
     throw error;
   }
-  const SAFE_PATTERN = /^backup_\d{8}_\d{6,9}[_a-z0-9]*\.json$/;
+  const SAFE_PATTERN = /^(backup_|migration_backup_)\d{8}_\d{6,9}[_a-z0-9]*\.json$/;
   if (!SAFE_PATTERN.test(filename)) {
     const error = new Error("备份文件名格式无效，只允许字母数字和下划线");
     error.code = BACKUP_ERRORS.BACKUP_NOT_FOUND;
@@ -541,10 +558,227 @@ async function validateBackup(filename) {
   };
 }
 
-async function restoreFromBackup(filename) {
+function pickKeyFields(entity, entityType) {
+  const keys = ENTITY_KEY_FIELDS[entityType] || ["id"];
+  const result = {};
+  keys.forEach((k) => {
+    if (entity[k] !== undefined) result[k] = entity[k];
+  });
+  return result;
+}
+
+function computeFieldChanges(oldEntity, newEntity, entityType) {
+  const keys = ENTITY_KEY_FIELDS[entityType] || Object.keys(newEntity || {});
+  const changes = [];
+  keys.forEach((k) => {
+    const oldVal = oldEntity?.[k];
+    const newVal = newEntity?.[k];
+    if (oldVal !== newVal) {
+      changes.push({
+        field: k,
+        oldValue: oldVal ?? null,
+        newValue: newVal ?? null
+      });
+    }
+  });
+  return changes;
+}
+
+function computeEntityDiff(currentEntities, backupEntities, entityType) {
+  const currentMap = new Map((currentEntities || []).map((e) => [e.id, e]));
+  const backupMap = new Map((backupEntities || []).map((e) => [e.id, e]));
+
+  const added = [];
+  const removed = [];
+  const changed = [];
+
+  backupMap.forEach((entity, id) => {
+    if (!currentMap.has(id)) {
+      added.push({ id, ...pickKeyFields(entity, entityType) });
+    } else {
+      const currentEntity = currentMap.get(id);
+      const fieldChanges = computeFieldChanges(currentEntity, entity, entityType);
+      if (fieldChanges.length > 0) {
+        changed.push({
+          id,
+          ...pickKeyFields(entity, entityType),
+          fieldChanges
+        });
+      }
+    }
+  });
+
+  currentMap.forEach((entity, id) => {
+    if (!backupMap.has(id)) {
+      removed.push({ id, ...pickKeyFields(entity, entityType) });
+    }
+  });
+
+  return {
+    counts: {
+      added: added.length,
+      removed: removed.length,
+      changed: changed.length,
+      totalInBackup: backupMap.size,
+      totalInCurrent: currentMap.size
+    },
+    samples: {
+      added: added.slice(0, DIFF_SAMPLE_LIMIT),
+      removed: removed.slice(0, DIFF_SAMPLE_LIMIT),
+      changed: changed.slice(0, DIFF_SAMPLE_LIMIT)
+    },
+    hasMore: {
+      added: added.length > DIFF_SAMPLE_LIMIT,
+      removed: removed.length > DIFF_SAMPLE_LIMIT,
+      changed: changed.length > DIFF_SAMPLE_LIMIT
+    }
+  };
+}
+
+function readBackupEntities(backupData) {
+  if (!backupData || typeof backupData !== "object") {
+    return null;
+  }
+  if (typeof backupData.schemaVersion === "number" && backupData.entities) {
+    return {
+      rubbings: backupData.entities.rubbings || [],
+      damages: backupData.entities.damages || [],
+      batches: backupData.entities.batches || [],
+      repairImages: backupData.entities.repairImages || [],
+      batchSnapshots: backupData.entities.batchSnapshots || []
+    };
+  }
+  return {
+    rubbings: backupData.rubbings || [],
+    damages: backupData.damages || [],
+    batches: backupData.batches || [],
+    repairImages: backupData.repairImages || [],
+    batchSnapshots: backupData.batchSnapshots || []
+  };
+}
+
+function detectBackupStructure(backup) {
+  if (!backup || !backup.data || typeof backup.data !== "object") {
+    return { version: null, structure: "invalid", readable: false };
+  }
+  const data = backup.data;
+  if (typeof data.schemaVersion === "number") {
+    if (data.schemaVersion === 2 && data.entities) {
+      return { version: 2, structure: "v2", readable: true };
+    }
+    if (data.schemaVersion === 1) {
+      return { version: 1, structure: "v1", readable: true };
+    }
+    return { version: data.schemaVersion, structure: "unknown_version", readable: false };
+  }
+  const legacyKeys = ["rubbings", "damages", "batches"];
+  const hasLegacy = legacyKeys.every((k) => Array.isArray(data[k]));
+  if (hasLegacy) {
+    return { version: 0, structure: "v0_flat", readable: true };
+  }
+  return { version: null, structure: "unrecognized", readable: false };
+}
+
+async function computeBackupDiff(filename) {
+  const result = {
+    filename,
+    backupMeta: null,
+    backupStructure: null,
+    currentCounts: null,
+    backupCounts: null,
+    diff: null,
+    summary: null,
+    warnings: []
+  };
+
+  let backup;
+  try {
+    backup = await readBackupFile(filename);
+  } catch (readError) {
+    if (readError.code === BACKUP_ERRORS.JSON_CORRUPTED) {
+      return {
+        ...result,
+        backupStructure: { version: null, structure: "json_corrupted", readable: false },
+        warnings: [`备份文件JSON损坏，无法解析: ${readError.message}`],
+        error: {
+          code: BACKUP_ERRORS.JSON_CORRUPTED,
+          message: "备份文件JSON损坏，无法读取差异"
+        }
+      };
+    }
+    throw readError;
+  }
+
+  result.backupMeta = {
+    createdAt: backup.meta?.createdAt || null,
+    version: backup.meta?.version ?? null,
+    type: backup.meta?.type || "normal_backup"
+  };
+
+  const structureInfo = detectBackupStructure(backup);
+  result.backupStructure = structureInfo;
+
+  if (!structureInfo.readable) {
+    result.warnings.push(`备份数据结构无法识别（${structureInfo.structure}），无法计算差异`);
+    result.error = {
+      code: BACKUP_ERRORS.INVALID_STRUCTURE,
+      message: `备份结构无效或不受支持: ${structureInfo.structure}`
+    };
+    return result;
+  }
+
+  if (structureInfo.version === 0) {
+    result.warnings.push("检测到 v0 旧结构备份，数据字段可能不完整（缺少 repairImages/batchSnapshots）");
+  }
+
+  const currentDb = await readDb();
+  const backupEntities = readBackupEntities(backup.data);
+
+  result.currentCounts = getDataCounts(currentDb);
+  result.backupCounts = getDataCounts(backup.data);
+
+  const entityTypes = ["rubbings", "damages", "batches", "repairImages", "batchSnapshots"];
+  result.diff = {};
+
+  entityTypes.forEach((type) => {
+    result.diff[type] = computeEntityDiff(currentDb[type], backupEntities[type], type);
+  });
+
+  const totalAdded = entityTypes.reduce((sum, t) => sum + result.diff[t].counts.added, 0);
+  const totalRemoved = entityTypes.reduce((sum, t) => sum + result.diff[t].counts.removed, 0);
+  const totalChanged = entityTypes.reduce((sum, t) => sum + result.diff[t].counts.changed, 0);
+
+  result.summary = {
+    totalAdded,
+    totalRemoved,
+    totalChanged,
+    totalImpacted: totalAdded + totalRemoved + totalChanged,
+    restoreImpact: `恢复将新增 ${totalAdded} 条、删除 ${totalRemoved} 条、变更 ${totalChanged} 条记录（共 ${totalAdded + totalRemoved + totalChanged} 条受影响）`
+  };
+
+  return result;
+}
+
+async function restoreFromBackup(filename, precomputedDiff = null) {
   const validation = await validateBackup(filename);
   const backup = await readBackupFile(filename);
   const tempFile = path.join(BACKUP_DIR, `temp_restore_${Date.now()}.json`);
+
+  let diff = precomputedDiff;
+  if (!diff) {
+    try {
+      diff = await computeBackupDiff(filename);
+    } catch (diffError) {
+      diff = {
+        error: {
+          code: diffError.code || "DIFF_COMPUTE_FAILED",
+          message: diffError.message || "差异计算失败"
+        },
+        warnings: [`差异计算失败: ${diffError.message}`]
+      };
+    }
+  }
+
   try {
     await writeFile(tempFile, JSON.stringify(backup.data, null, 2));
     const verifyData = JSON.parse(await readFile(tempFile, "utf8"));
@@ -556,7 +790,10 @@ async function restoreFromBackup(filename) {
       success: true,
       restoredFrom: filename,
       restoredAt: new Date().toISOString(),
-      dataCounts: validation.dataCounts
+      dataCounts: validation.dataCounts,
+      restoreImpact: diff.summary || null,
+      diff: diff.diff || null,
+      warnings: diff.warnings || []
     };
   } finally {
     try {
@@ -2411,6 +2648,27 @@ async function handle(req, res) {
     }
   }
 
+  const backupDiffMatch = pathname.match(/^\/backups\/([^/]+)\/diff$/);
+  if (backupDiffMatch && req.method === "GET") {
+    try {
+      const filename = sanitizeBackupFilename(decodeURIComponent(backupDiffMatch[1]));
+      const result = await computeBackupDiff(filename);
+      if (result.error) {
+        return send(res, 400, {
+          data: result,
+          error: result.error.message,
+          code: result.error.code
+        });
+      }
+      return send(res, 200, { data: result });
+    } catch (error) {
+      return send(res, error.status || 500, {
+        error: error.message,
+        code: error.code
+      });
+    }
+  }
+
   const backupRestoreMatch = pathname.match(/^\/backups\/([^/]+)\/restore$/);
   if (backupRestoreMatch && req.method === "POST") {
     const filename = sanitizeBackupFilename(decodeURIComponent(backupRestoreMatch[1]));
@@ -2427,14 +2685,29 @@ async function handle(req, res) {
       } catch {
         backupInfo = { filename, dataCounts: null, createdAt: null, size: null };
       }
-      const result = await restoreFromBackup(filename);
+
+      let precomputedDiff = null;
+      try {
+        precomputedDiff = await computeBackupDiff(filename);
+      } catch (diffError) {
+        precomputedDiff = null;
+      }
+
+      const result = await restoreFromBackup(filename, precomputedDiff);
       const businessResult = { data: result };
+
+      const auditExtra = {
+        restoreImpact: result.restoreImpact,
+        warnings: result.warnings
+      };
+
       return executeWithAudit({
         actionType: AUDIT_ACTION_TYPES.RESTORE_BACKUP,
         targetType: "backup",
         targetId: filename,
         oldValues: backupInfo,
         newValues: { restoredAt: result.restoredAt, dataCounts: result.dataCounts },
+        extra: auditExtra,
         businessResult,
         statusCode: 200,
         res
