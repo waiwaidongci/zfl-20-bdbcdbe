@@ -32,6 +32,7 @@ const BACKUP_ERRORS = {
 };
 
 const DIFF_SAMPLE_LIMIT = 5;
+const BACKUP_FILENAME_PATTERN = /^(backup_|migration_backup_)\d{8}_\d{6,9}[_a-z0-9]*\.json$/;
 const ENTITY_KEY_FIELDS = {
   rubbings: ["id", "code", "source", "paperSize"],
   damages: ["id", "position", "type", "status", "reviewStatus"],
@@ -411,11 +412,11 @@ function validateDataStructure(data) {
 function getDataCounts(data) {
   if (data && typeof data === "object" && typeof data.schemaVersion === "number" && data.entities) {
     return {
-      rubbings: data.entities.rubbings.length,
-      damages: data.entities.damages.length,
-      batches: data.entities.batches.length,
-      repairImages: data.entities.repairImages.length,
-      batchSnapshots: data.entities.batchSnapshots.length
+      rubbings: (data.entities.rubbings || []).length,
+      damages: (data.entities.damages || []).length,
+      batches: (data.entities.batches || []).length,
+      repairImages: (data.entities.repairImages || []).length,
+      batchSnapshots: (data.entities.batchSnapshots || []).length
     };
   }
   return {
@@ -434,8 +435,7 @@ function sanitizeBackupFilename(filename) {
     error.status = 400;
     throw error;
   }
-  const SAFE_PATTERN = /^(backup_|migration_backup_)\d{8}_\d{6,9}[_a-z0-9]*\.json$/;
-  if (!SAFE_PATTERN.test(filename)) {
+  if (!BACKUP_FILENAME_PATTERN.test(filename)) {
     const error = new Error("备份文件名格式无效，只允许字母数字和下划线");
     error.code = BACKUP_ERRORS.BACKUP_NOT_FOUND;
     error.status = 400;
@@ -494,7 +494,7 @@ async function createBackup() {
 async function listBackups() {
   await ensureBackupDir();
   const files = await readdir(BACKUP_DIR);
-  const backupFiles = files.filter((f) => f.startsWith("backup_") && f.endsWith(".json"));
+  const backupFiles = files.filter((f) => BACKUP_FILENAME_PATTERN.test(f));
   const backups = [];
   for (const filename of backupFiles) {
     try {
