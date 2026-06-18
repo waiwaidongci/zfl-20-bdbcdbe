@@ -1514,9 +1514,12 @@ async function handle(req, res) {
     }
 
     const scheduledDamageIds = new Set();
-    db.batches.forEach((b) => {
-      if (b.status !== "completed") {
-        b.damageIds.forEach((did) => scheduledDamageIds.add(did));
+    db.damages.forEach((d) => {
+      if (d.batchId) {
+        const batch = db.batches.find((b) => b.id === d.batchId);
+        if (batch && batch.status !== "completed") {
+          scheduledDamageIds.add(d.id);
+        }
       }
     });
     const conflictDamageIds = body.damageIds.filter((did) => scheduledDamageIds.has(did));
@@ -1687,6 +1690,7 @@ async function handle(req, res) {
       if (!batch.damageIds.includes(damage.id)) return;
       const result = results.find((item) => item.damageId === damage.id) || {};
       damage.status = "repaired";
+      damage.batchId = batch.id;
       damage.afterPhotoUrl = result.afterPhotoUrl || body.defaultAfterPhotoUrl || damage.afterPhotoUrl;
       damage.repairNote = result.repairNote || body.defaultRepairNote || damage.repairNote;
       damage.repairedAt = new Date().toISOString();
@@ -1794,7 +1798,8 @@ async function handle(req, res) {
             status: savedDamage.status,
             afterPhotoUrl: savedDamage.afterPhotoUrl,
             repairNote: savedDamage.repairNote,
-            repairedAt: savedDamage.repairedAt
+            repairedAt: savedDamage.repairedAt,
+            batchId: null
           });
         }
       });
@@ -1880,8 +1885,16 @@ async function handle(req, res) {
           status: savedDamage.status,
           afterPhotoUrl: savedDamage.afterPhotoUrl,
           repairNote: savedDamage.repairNote,
-          repairedAt: savedDamage.repairedAt
+          repairedAt: savedDamage.repairedAt,
+          batchId: null
         });
+      }
+    });
+
+    batch.damageIds.forEach((did) => {
+      const damage = db.damages.find((d) => d.id === did);
+      if (damage && damage.batchId === batchId) {
+        damage.batchId = null;
       }
     });
 
