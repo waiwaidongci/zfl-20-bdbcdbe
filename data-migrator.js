@@ -90,6 +90,7 @@ function buildV2EmptyStructure() {
     meta: {
       createdAt: null,
       lastModifiedAt: null,
+      writeVersion: 0,
       migrationHistory: [],
       dataStatistics: {
         rubbings: 0,
@@ -171,6 +172,7 @@ function buildV3EmptyStructure() {
     meta: {
       createdAt: null,
       lastModifiedAt: null,
+      writeVersion: 0,
       migrationHistory: [],
       dataStatistics: {
         rubbings: 0,
@@ -883,6 +885,11 @@ async function migrateToLatest() {
     const validationErrors = validateV3Structure(workingData);
     if (validationErrors.length > 0) {
       throw new Error(`迁移后结构校验失败: ${validationErrors.join("; ")}`);
+    }
+
+    const originalWriteVersion = currentData?.meta?.writeVersion ?? 0;
+    if (workingData.meta) {
+      workingData.meta.writeVersion = originalWriteVersion + 1;
     }
 
     await writeDbRaw(workingData);

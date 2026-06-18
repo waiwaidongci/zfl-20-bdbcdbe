@@ -1,41 +1,79 @@
 {
   "schemaVersion": 3,
   "meta": {
-    "createdAt": "2026-06-18T07:54:41.337Z",
-    "lastModifiedAt": "2026-06-18T07:54:41.419Z",
+    "createdAt": "2026-06-18T11:05:34.753Z",
+    "lastModifiedAt": "2026-06-18T11:05:34.993Z",
     "migrationHistory": [],
     "dataStatistics": {
       "rubbings": 1,
-      "damages": 1,
+      "damages": 3,
       "batches": 0,
       "repairImages": 0,
       "batchSnapshots": 0,
-      "auditTrailEvents": 1
-    }
+      "auditTrailEvents": 2
+    },
+    "writeVersion": 4
   },
   "entities": {
     "rubbings": [
       {
         "id": "r1",
-        "code": "TP-测试-001",
-        "source": "测试来源",
-        "paperSize": "30x40cm",
-        "createdAt": "2026-06-01T00:00:00.000Z"
+        "code": "TP-清-014",
+        "source": "地方碑刻残页",
+        "paperSize": "42x68cm",
+        "note": "边缘有旧折痕",
+        "createdAt": "2026-01-15T00:00:00.000Z"
       }
     ],
     "damages": [
       {
         "id": "d1",
         "rubbingId": "r1",
-        "position": "测试位置",
-        "type": "测试类型",
-        "beforePhotoUrl": "test.jpg",
+        "position": "左上角",
+        "type": "虫蛀孔",
+        "beforePhotoUrl": "x.jpg",
+        "afterPhotoUrl": "",
         "status": "pending",
+        "repairNote": "",
+        "batchId": null,
         "reviewStatus": "approved",
-        "createdAt": "2026-06-01T00:00:00.000Z",
         "rejectReason": "",
-        "reviewedBy": "审核员1",
-        "reviewedAt": "2026-06-18T07:54:41.419Z"
+        "createdAt": "2026-01-16T00:00:00.000Z",
+        "repairedAt": null,
+        "reviewedBy": "CSV审核员",
+        "reviewedAt": "2026-06-18T11:05:34.987Z"
+      },
+      {
+        "id": "d2",
+        "rubbingId": "r1",
+        "position": "下边缘",
+        "type": "撕裂",
+        "beforePhotoUrl": "x.jpg",
+        "afterPhotoUrl": "",
+        "status": "pending",
+        "repairNote": "",
+        "batchId": null,
+        "reviewStatus": "rejected",
+        "rejectReason": "CSV驳回原因",
+        "createdAt": "2026-01-16T00:00:00.000Z",
+        "repairedAt": null,
+        "reviewedBy": "CSV审核员2",
+        "reviewedAt": "2026-06-18T11:05:34.992Z"
+      },
+      {
+        "id": "d3",
+        "rubbingId": "r1",
+        "position": "中央",
+        "type": "霉斑",
+        "beforePhotoUrl": "x.jpg",
+        "afterPhotoUrl": "",
+        "status": "pending",
+        "repairNote": "",
+        "batchId": null,
+        "reviewStatus": "approved",
+        "rejectReason": "",
+        "createdAt": "2026-01-15T00:00:00.000Z",
+        "repairedAt": null
       }
     ],
     "batches": [],
@@ -60,38 +98,93 @@
   },
   "auditTrail": [
     {
-      "id": "evt_mqj7fcel_pmuabt",
+      "id": "evt_mqje8u19_leewf1",
       "eventType": "damage_approved",
       "targetType": "damage",
       "targetId": "d1",
-      "timestamp": "2026-06-18T07:54:41.421Z",
-      "actor": "审核员1",
+      "timestamp": "2026-06-18T11:05:34.990Z",
+      "actor": "CSV审核员",
       "oldValues": {
         "id": "d1",
         "rubbingId": "r1",
-        "position": "测试位置",
-        "type": "测试类型",
-        "beforePhotoUrl": "test.jpg",
+        "position": "左上角",
+        "type": "虫蛀孔",
+        "beforePhotoUrl": "x.jpg",
+        "afterPhotoUrl": "",
         "status": "pending",
+        "repairNote": "",
+        "batchId": null,
         "reviewStatus": "review_pending",
-        "createdAt": "2026-06-01T00:00:00.000Z"
+        "rejectReason": "",
+        "createdAt": "2026-01-16T00:00:00.000Z",
+        "repairedAt": null
       },
       "newValues": {
         "id": "d1",
         "rubbingId": "r1",
-        "position": "测试位置",
-        "type": "测试类型",
-        "beforePhotoUrl": "test.jpg",
+        "position": "左上角",
+        "type": "虫蛀孔",
+        "beforePhotoUrl": "x.jpg",
+        "afterPhotoUrl": "",
         "status": "pending",
+        "repairNote": "",
+        "batchId": null,
         "reviewStatus": "approved",
-        "createdAt": "2026-06-01T00:00:00.000Z",
         "rejectReason": "",
-        "reviewedBy": "审核员1",
-        "reviewedAt": "2026-06-18T07:54:41.419Z"
+        "createdAt": "2026-01-16T00:00:00.000Z",
+        "repairedAt": null,
+        "reviewedBy": "CSV审核员",
+        "reviewedAt": "2026-06-18T11:05:34.987Z"
       },
       "reason": null,
       "metadata": {
-        "changeSummary": "审核通过：缺损 d1，审核人 审核员1，状态 review_pending → approved",
+        "changeSummary": "审核通过：缺损 d1，审核人 CSV审核员，状态 review_pending → approved",
+        "success": true,
+        "extra": null
+      }
+    },
+    {
+      "id": "evt_mqje8u1d_sjyixc",
+      "eventType": "damage_rejected",
+      "targetType": "damage",
+      "targetId": "d2",
+      "timestamp": "2026-06-18T11:05:34.993Z",
+      "actor": "CSV审核员2",
+      "oldValues": {
+        "id": "d2",
+        "rubbingId": "r1",
+        "position": "下边缘",
+        "type": "撕裂",
+        "beforePhotoUrl": "x.jpg",
+        "afterPhotoUrl": "",
+        "status": "pending",
+        "repairNote": "",
+        "batchId": null,
+        "reviewStatus": "review_pending",
+        "rejectReason": "",
+        "createdAt": "2026-01-16T00:00:00.000Z",
+        "repairedAt": null
+      },
+      "newValues": {
+        "id": "d2",
+        "rubbingId": "r1",
+        "position": "下边缘",
+        "type": "撕裂",
+        "beforePhotoUrl": "x.jpg",
+        "afterPhotoUrl": "",
+        "status": "pending",
+        "repairNote": "",
+        "batchId": null,
+        "reviewStatus": "rejected",
+        "rejectReason": "CSV驳回原因",
+        "createdAt": "2026-01-16T00:00:00.000Z",
+        "repairedAt": null,
+        "reviewedBy": "CSV审核员2",
+        "reviewedAt": "2026-06-18T11:05:34.992Z"
+      },
+      "reason": "CSV驳回原因",
+      "metadata": {
+        "changeSummary": "审核驳回：缺损 d2，审核人 CSV审核员2，驳回原因：CSV驳回原因",
         "success": true,
         "extra": null
       }

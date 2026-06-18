@@ -49,6 +49,39 @@ const VALID_BATCH_STATUSES = ["open", "completed", "partially_rolled_back"];
 const precheckTokenStore = new Map();
 const PRECHECK_TOKEN_TTL = 5 * 60 * 1000;
 
+const writeQueue = { _chain: Promise.resolve() };
+
+function enqueueWrite(writeFn) {
+  const promise = writeQueue._chain.then(() => writeFn());
+  writeQueue._chain = promise.catch(() => {});
+  return promise;
+}
+
+function getWriteVersion(raw) {
+  return raw?.meta?.writeVersion ?? 0;
+}
+
+function attachVersion(data, version) {
+  Object.defineProperty(data, "__writeVersion", {
+    value: version,
+    writable: true,
+    enumerable: false,
+    configurable: true
+  });
+  return data;
+}
+
+function createVersionConflictError(expectedVersion, currentVersion) {
+  const error = new Error(
+    `数据版本冲突：您所基于的数据版本（v${expectedVersion}）已被其他请求修改（当前版本 v${currentVersion}）。请刷新后重试。`
+  );
+  error.code = "VERSION_CONFLICT";
+  error.status = 409;
+  error.expectedVersion = expectedVersion;
+  error.currentVersion = currentVersion;
+  return error;
+}
+
 const initialData = {
   rubbings: [
     {
@@ -187,9 +220,11 @@ async function readDb() {
     raw = JSON.parse(await readFile(DB_FILE, "utf8"));
   } catch (parseErr) {
     console.error(`[readDb] JSON 解析失败，使用空数据: ${parseErr.message}`);
-    return { rubbings: [], damages: [], batches: [], repairImages: [], batchSnapshots: [] };
+    return attachVersion({ rubbings: [], damages: [], batches: [], repairImages: [], batchSnapshots: [] }, 0);
   }
-  return unwrapDbData(raw);
+  const version = getWriteVersion(raw);
+  const data = unwrapDbData(raw);
+  return attachVersion(data, version);
 }
 
 function makeAuditEventId() {
@@ -197,133 +232,171 @@ function makeAuditEventId() {
 }
 
 async function writeAuditTrailEvent(event) {
-  let raw;
-  try {
-    raw = JSON.parse(await readFile(DB_FILE, "utf8"));
-  } catch (error) {
-    console.warn(`[writeAuditTrailEvent] 读取数据库失败，跳过事件写入: ${error.message}`);
-    return null;
-  }
+  return enqueueWrite(async () => {
+    let raw;
+    try {
+      raw = JSON.parse(await readFile(DB_FILE, "utf8"));
+    } catch (error) {
+      console.warn(`[writeAuditTrailEvent] 读取数据库失败，跳过事件写入: ${error.message}`);
+      return null;
+    }
 
-  if (!raw || typeof raw !== "object" || typeof raw.schemaVersion !== "number" || raw.schemaVersion < 3) {
-    return null;
-  }
+    if (!raw || typeof raw !== "object" || typeof raw.schemaVersion !== "number" || raw.schemaVersion < 3) {
+      return null;
+    }
 
-  if (!Array.isArray(raw.auditTrail)) {
-    raw.auditTrail = [];
-  }
+    if (!Array.isArray(raw.auditTrail)) {
+      raw.auditTrail = [];
+    }
 
-  const fullEvent = {
-    id: makeAuditEventId(),
-    eventType: event.eventType,
-    targetType: event.targetType || null,
-    targetId: event.targetId || null,
-    timestamp: new Date().toISOString(),
-    actor: event.actor || null,
-    oldValues: event.oldValues || null,
-    newValues: event.newValues || null,
-    reason: event.reason || null,
-    metadata: event.metadata || {}
-  };
+    const fullEvent = {
+      id: makeAuditEventId(),
+      eventType: event.eventType,
+      targetType: event.targetType || null,
+      targetId: event.targetId || null,
+      timestamp: new Date().toISOString(),
+      actor: event.actor || null,
+      oldValues: event.oldValues || null,
+      newValues: event.newValues || null,
+      reason: event.reason || null,
+      metadata: event.metadata || {}
+    };
 
-  raw.auditTrail.push(fullEvent);
-  raw.meta.dataStatistics.auditTrailEvents = raw.auditTrail.length;
+    const currentVersion = getWriteVersion(raw);
+    raw.auditTrail.push(fullEvent);
+    raw.meta.dataStatistics.auditTrailEvents = raw.auditTrail.length;
+    raw.meta.lastModifiedAt = new Date().toISOString();
+    raw.meta.writeVersion = currentVersion + 1;
 
-  try {
-    await writeFile(DB_FILE, JSON.stringify(raw, null, 2));
-    return fullEvent;
-  } catch (error) {
-    console.warn(`[writeAuditTrailEvent] 写入事件失败: ${error.message}`);
-    return null;
-  }
+    const tempFile = path.join(path.dirname(DB_FILE), `.db.tmp.audit.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.json`);
+    try {
+      const jsonStr = JSON.stringify(raw, null, 2);
+      await writeFile(tempFile, jsonStr);
+      JSON.parse(await readFile(tempFile, "utf8"));
+      try {
+        await rename(tempFile, DB_FILE);
+      } catch (renameErr) {
+        if (renameErr.code === "EXDEV" || renameErr.code === "EPERM") {
+          await copyFile(tempFile, DB_FILE);
+          await unlink(tempFile);
+        } else {
+          throw renameErr;
+        }
+      }
+      return fullEvent;
+    } catch (error) {
+      console.warn(`[writeAuditTrailEvent] 写入事件失败: ${error.message}`);
+      try {
+        await unlink(tempFile);
+      } catch (_) {
+      }
+      return null;
+    }
+  });
 }
 
 async function writeDb(data) {
-  let raw;
-  try {
-    raw = JSON.parse(await readFile(DB_FILE, "utf8"));
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      raw = null;
-    } else {
-      const writeError = new Error(`写入被阻断：当前数据库JSON损坏 - ${error.message}`);
-      writeError.code = "JSON_CORRUPTED";
-      throw writeError;
-    }
-  }
+  const expectedVersion = data.__writeVersion;
 
-  let toWrite;
-  if (raw && typeof raw === "object" && typeof raw.schemaVersion === "number" && raw.entities) {
-    const version = raw.schemaVersion;
-    raw.entities = {
-      rubbings: data.rubbings || [],
-      damages: data.damages || [],
-      batches: data.batches || [],
-      repairImages: data.repairImages || [],
-      batchSnapshots: data.batchSnapshots || []
-    };
-    raw.meta.lastModifiedAt = new Date().toISOString();
-
-    if (version >= 3) {
-      raw.meta.dataStatistics = {
-        rubbings: raw.entities.rubbings.length,
-        damages: raw.entities.damages.length,
-        batches: raw.entities.batches.length,
-        repairImages: raw.entities.repairImages.length,
-        batchSnapshots: raw.entities.batchSnapshots.length,
-        auditTrailEvents: (raw.auditTrail || []).length
-      };
-      raw.imageArchive.summary = migrator.rebuildImageArchiveStats(raw.entities);
-      if (!Array.isArray(raw.auditTrail)) {
-        raw.auditTrail = [];
-      }
-      const v3Errors = migrator.validateV3Structure(raw);
-      if (v3Errors.length > 0) {
-        throw new Error(`写入被阻断：v3 结构校验失败 - ${v3Errors.join("; ")}`);
-      }
-    } else {
-      raw.meta.dataStatistics = {
-        rubbings: raw.entities.rubbings.length,
-        damages: raw.entities.damages.length,
-        batches: raw.entities.batches.length,
-        repairImages: raw.entities.repairImages.length,
-        batchSnapshots: raw.entities.batchSnapshots.length
-      };
-      const v2Errors = migrator.validateV2Structure(raw);
-      if (v2Errors.length > 0) {
-        throw new Error(`写入被阻断：v2 结构校验失败 - ${v2Errors.join("; ")}`);
-      }
-    }
-    toWrite = raw;
-  } else {
-    if (!data || typeof data !== "object") {
-      throw new Error("写入被阻断：数据不是有效对象");
-    }
-    toWrite = data;
-  }
-
-  const tempFile = path.join(path.dirname(DB_FILE), `.db.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.json`);
-  try {
-    const jsonStr = JSON.stringify(toWrite, null, 2);
-    await writeFile(tempFile, jsonStr);
-    JSON.parse(await readFile(tempFile, "utf8"));
+  return enqueueWrite(async () => {
+    let raw;
     try {
-      await rename(tempFile, DB_FILE);
-    } catch (renameErr) {
-      if (renameErr.code === "EXDEV" || renameErr.code === "EPERM") {
-        await copyFile(tempFile, DB_FILE);
-        await unlink(tempFile);
+      raw = JSON.parse(await readFile(DB_FILE, "utf8"));
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        raw = null;
       } else {
-        throw renameErr;
+        const writeError = new Error(`写入被阻断：当前数据库JSON损坏 - ${error.message}`);
+        writeError.code = "JSON_CORRUPTED";
+        throw writeError;
       }
     }
-  } catch (e) {
-    try {
-      await unlink(tempFile);
-    } catch (_) {
+
+    const currentVersion = getWriteVersion(raw);
+    if (expectedVersion !== undefined && currentVersion !== expectedVersion) {
+      throw createVersionConflictError(expectedVersion, currentVersion);
     }
-    throw e;
-  }
+
+    let toWrite;
+    if (raw && typeof raw === "object" && typeof raw.schemaVersion === "number" && raw.entities) {
+      const version = raw.schemaVersion;
+      raw.entities = {
+        rubbings: data.rubbings || [],
+        damages: data.damages || [],
+        batches: data.batches || [],
+        repairImages: data.repairImages || [],
+        batchSnapshots: data.batchSnapshots || []
+      };
+      raw.meta.lastModifiedAt = new Date().toISOString();
+      raw.meta.writeVersion = currentVersion + 1;
+
+      if (version >= 3) {
+        raw.meta.dataStatistics = {
+          rubbings: raw.entities.rubbings.length,
+          damages: raw.entities.damages.length,
+          batches: raw.entities.batches.length,
+          repairImages: raw.entities.repairImages.length,
+          batchSnapshots: raw.entities.batchSnapshots.length,
+          auditTrailEvents: (raw.auditTrail || []).length
+        };
+        raw.imageArchive.summary = migrator.rebuildImageArchiveStats(raw.entities);
+        if (!Array.isArray(raw.auditTrail)) {
+          raw.auditTrail = [];
+        }
+        const v3Errors = migrator.validateV3Structure(raw);
+        if (v3Errors.length > 0) {
+          throw new Error(`写入被阻断：v3 结构校验失败 - ${v3Errors.join("; ")}`);
+        }
+      } else {
+        raw.meta.dataStatistics = {
+          rubbings: raw.entities.rubbings.length,
+          damages: raw.entities.damages.length,
+          batches: raw.entities.batches.length,
+          repairImages: raw.entities.repairImages.length,
+          batchSnapshots: raw.entities.batchSnapshots.length
+        };
+        const v2Errors = migrator.validateV2Structure(raw);
+        if (v2Errors.length > 0) {
+          throw new Error(`写入被阻断：v2 结构校验失败 - ${v2Errors.join("; ")}`);
+        }
+      }
+      toWrite = raw;
+    } else {
+      if (!data || typeof data !== "object") {
+        throw new Error("写入被阻断：数据不是有效对象");
+      }
+      toWrite = data;
+      if (!toWrite.meta) toWrite.meta = {};
+      toWrite.meta.writeVersion = currentVersion + 1;
+    }
+
+    const tempFile = path.join(path.dirname(DB_FILE), `.db.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.json`);
+    try {
+      const jsonStr = JSON.stringify(toWrite, null, 2);
+      await writeFile(tempFile, jsonStr);
+      JSON.parse(await readFile(tempFile, "utf8"));
+      try {
+        await rename(tempFile, DB_FILE);
+      } catch (renameErr) {
+        if (renameErr.code === "EXDEV" || renameErr.code === "EPERM") {
+          await copyFile(tempFile, DB_FILE);
+          await unlink(tempFile);
+        } else {
+          throw renameErr;
+        }
+      }
+    } catch (e) {
+      try {
+        await unlink(tempFile);
+      } catch (_) {
+      }
+      throw e;
+    }
+
+    if (data && typeof data === "object") {
+      attachVersion(data, currentVersion + 1);
+    }
+  });
 }
 
 async function ensureAuditLog() {
@@ -922,29 +995,66 @@ async function restoreFromBackup(filename, precomputedDiff = null) {
     if (!validateDataStructure(verifyData)) {
       throw new Error("恢复前校验失败：数据结构无效");
     }
-    await writeFile(DB_FILE, JSON.stringify(backup.data, null, 2));
 
-    const backupVersion = backup.data.schemaVersion ?? 0;
-    if (backupVersion < migrator.CURRENT_SCHEMA_VERSION) {
-      warnings.push(`备份数据为 v${backupVersion} 版本，正在自动升级到 v${migrator.CURRENT_SCHEMA_VERSION}`);
+    migrationResult = await enqueueWrite(async () => {
+      let currentRaw;
       try {
-        migrationResult = await migrator.migrateToLatest();
-        if (migrationResult.action === "migrated") {
-          warnings.push(`自动升级成功: v${migrationResult.fromVersion} → v${migrationResult.toVersion}`);
-          if (migrationResult.backup) {
-            warnings.push(`升级前备份: ${migrationResult.backup.filename}`);
-          }
-        } else if (migrationResult.action === "none_needed") {
-          warnings.push(`数据已是最新版本 v${migrationResult.toVersion}`);
-        }
-      } catch (migrationError) {
-        warnings.push(`自动升级失败: ${migrationError.message}，数据停留在 v${backupVersion}`);
-        if (migrationError.backupFile) {
-          warnings.push(`升级前备份文件: ${migrationError.backupFile}`);
-        }
+        currentRaw = JSON.parse(await readFile(DB_FILE, "utf8"));
+      } catch (_) {
+        currentRaw = null;
       }
+      const currentVersion = getWriteVersion(currentRaw);
+
+      let dataToWrite = JSON.parse(JSON.stringify(backup.data));
+
+      if (dataToWrite && typeof dataToWrite === "object" && dataToWrite.meta) {
+        dataToWrite.meta.writeVersion = currentVersion + 1;
+        dataToWrite.meta.lastModifiedAt = new Date().toISOString();
+      } else if (dataToWrite && typeof dataToWrite === "object") {
+        dataToWrite.meta = { writeVersion: currentVersion + 1, lastModifiedAt: new Date().toISOString() };
+      }
+
+      const dbTempFile = path.join(path.dirname(DB_FILE), `.db.tmp.restore.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.json`);
+      try {
+        await writeFile(dbTempFile, JSON.stringify(dataToWrite, null, 2));
+        JSON.parse(await readFile(dbTempFile, "utf8"));
+        try {
+          await rename(dbTempFile, DB_FILE);
+        } catch (renameErr) {
+          if (renameErr.code === "EXDEV" || renameErr.code === "EPERM") {
+            await copyFile(dbTempFile, DB_FILE);
+            await unlink(dbTempFile);
+          } else {
+            throw renameErr;
+          }
+        }
+      } catch (e) {
+        try {
+          await unlink(dbTempFile);
+        } catch (_) {
+        }
+        throw e;
+      }
+
+      const backupVersion = backup.data.schemaVersion ?? 0;
+      if (backupVersion < migrator.CURRENT_SCHEMA_VERSION) {
+        return migrator.migrateToLatest();
+      }
+      return null;
+    });
+
+    if (migrationResult && migrationResult.action === "migrated") {
+      warnings.push(`自动升级成功: v${migrationResult.fromVersion} → v${migrationResult.toVersion}`);
+      if (migrationResult.backup) {
+        warnings.push(`升级前备份: ${migrationResult.backup.filename}`);
+      }
+    } else if (migrationResult && migrationResult.action === "none_needed") {
+      warnings.push(`数据已是最新版本 v${migrationResult.toVersion}`);
+    } else if (migrationResult && migrationResult.action === "initialized") {
+      warnings.push(`数据库已初始化`);
     }
 
+    const backupVersion = backup.data.schemaVersion ?? 0;
     return {
       success: true,
       restoredFrom: filename,
